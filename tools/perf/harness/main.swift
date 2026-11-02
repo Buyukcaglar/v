@@ -138,6 +138,9 @@ DispatchQueue.main.async {
                              f.now, f.peak, threadCount(), cachedPhotos(controller)))
                 let label = views(of: NSTextField.self, in: window.contentView!).first { $0.stringValue.contains(" of ") }
                 print("label: \(label?.stringValue.replacingOccurrences(of: "     ", with: " · ") ?? "none")")
+                let strip = views(of: FilmstripView.self, in: window.contentView!).first!
+                let thumbs = (strip.layer?.sublayers ?? []).compactMap { $0.contents }.map { $0 as! CGImage }
+                print("filmstrip: \(thumbs.count) thumbnails, widest \(thumbs.map(\.width).max() ?? 0) px")
                 exit(0)
             }
         case "zoom":

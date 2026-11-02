@@ -39,7 +39,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var pendingDecode: DispatchWorkItem?
     private var memoryPressure: DispatchSourceMemoryPressure?
     private let thumbCache = NSCache<NSURL, CGImage>()
-    private var thumbsLoading = Set<URL>()
+    private var thumbLoads: [URL: Operation] = [:]
     private let thumbQueue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 4
@@ -79,7 +79,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         window.delegate = self
         buildUI()
         updateForScreen()
-        thumbCache.countLimit = 600
+        thumbCache.totalCostLimit = 8 << 20
         pipeline.onDecoded = { [weak self] in self?.decoded($0, $1, $2) }
         watchMemoryPressure()
         NotificationCenter.default.addObserver(self, selector: #selector(screenParametersChanged),
@@ -151,6 +151,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
         filmstrip.translatesAutoresizingMaskIntoConstraints = false
         filmstrip.thumbnail = { [weak self] in self?.thumbnail(at: $0) }
+        filmstrip.onVisibleRange = { [weak self] in self?.loadThumbnails($0) }
         filmstrip.onSelect = { [weak self] in self?.go(to: $0) }
         chrome.addSubview(filmstrip)
 
@@ -304,7 +305,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func folderListed(_ list: [URL], at start: Int) {
         files = list
         index = start
-        filmstrip.count = list.count
+        filmstrip.urls = list
         filmstrip.current = start
         updateInfoLabel(currentInfo)
         pipeline.keep([list[start]] + neighborURLs)
@@ -319,8 +320,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
         files = list
         thumbQueue.cancelAllOperations()
-        thumbsLoading.removeAll()
-        filmstrip.count = files.count
+        thumbLoads.removeAll()
+        filmstrip.urls = files
+        filmstrip.resetPopIn()
         index = start
 
         if let window, !window.isVisible {
@@ -351,8 +353,6 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         guard let url = currentURL else { return }
         generation += 1
         let gen = generation
-        thumbQueue.cancelAllOperations()
-        thumbsLoading.removeAll()
 
         window?.title = url.lastPathComponent
         filmstrip.current = index
@@ -523,33 +523,56 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             }
             self.pipeline.dropFull()
             self.pipeline.keep([self.currentURL].compactMap { $0 })
-            if source.data.contains(.critical) { self.thumbCache.removeAllObjects() }
+            if source.data.contains(.critical) {
+                self.thumbCache.removeAllObjects()
+                self.thumbQueue.cancelAllOperations()
+                self.thumbLoads.removeAll()
+            }
         }
         source.resume()
         memoryPressure = source
     }
 
     private func thumbnail(at i: Int) -> CGImage? {
-        guard files.indices.contains(i) else { return nil }
-        let url = files[i]
-        if let thumb = thumbCache.object(forKey: url as NSURL) { return thumb }
-        if !thumbsLoading.contains(url) {
-            thumbsLoading.insert(url)
-            thumbQueue.addOperation { [weak self] in
-                let thumb = ImageLoader.thumbnail(url, maxPixel: 160)
-                OperationQueue.main.addOperation {
-                    guard let self else { return }
-                    self.thumbsLoading.remove(url)
-                    guard let thumb else { return }
-                    self.thumbCache.setObject(thumb, forKey: url as NSURL)
-                    self.filmstrip.needsDisplay = true
-                    if url == self.currentURL, self.canvasURL != url, self.currentInfo != nil {
-                        self.setCanvas(thumb, of: url)
-                    }
-                }
-            }
+        files.indices.contains(i) ? thumbCache.object(forKey: files[i] as NSURL) : nil
+    }
+
+    /// Loads the thumbnails for the filmstrip's slots, nearest the current photo first, and
+    /// drops queued ones that scrolled out of view.
+    private func loadThumbnails(_ range: Range<Int>) {
+        guard range.lowerBound >= 0, range.upperBound <= files.count else { return }
+        let visible = Set(files[range])
+        for (url, op) in thumbLoads where !visible.contains(url) {
+            op.cancel()
+            thumbLoads[url] = nil
         }
-        return nil
+        let side = Int(FilmstripView.thumbnailSide * (window?.backingScaleFactor ?? 2))
+        for i in range where thumbCache.object(forKey: files[i] as NSURL) == nil {
+            let url = files[i]
+            let distance = abs(i - index)
+            let priority: Operation.QueuePriority = distance == 0 ? .veryHigh : distance <= 3 ? .high : .normal
+            if let op = thumbLoads[url] {
+                op.queuePriority = priority
+                continue
+            }
+            let op = BlockOperation()
+            op.addExecutionBlock { [weak self, weak op] in
+                guard let op, !op.isCancelled else { return }
+                let thumb = ImageLoader.thumbnail(url, maxPixel: side)
+                DispatchQueue.main.async { self?.thumbnailLoaded(url, thumb, op) }
+            }
+            op.queuePriority = priority
+            thumbLoads[url] = op
+            thumbQueue.addOperation(op)
+        }
+    }
+
+    private func thumbnailLoaded(_ url: URL, _ thumb: CGImage?, _ op: Operation) {
+        if thumbLoads[url] === op { thumbLoads[url] = nil }
+        guard let thumb else { return }
+        thumbCache.setObject(thumb, forKey: url as NSURL, cost: thumb.bytesPerRow * thumb.height)
+        filmstrip.thumbnailsChanged()
+        if url == currentURL, canvasURL != url, currentInfo != nil { setCanvas(thumb, of: url) }
     }
 
     private func showMessage(_ text: String) {
@@ -693,7 +716,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             closeViewer(nil)
             return
         }
-        filmstrip.count = files.count
+        filmstrip.urls = files
         go(to: min(index, files.count - 1))
     }
 
