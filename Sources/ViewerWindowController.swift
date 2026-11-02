@@ -35,6 +35,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// The photo whose pixels (thumbnail or decoded) the canvas shows.
     private var canvasURL: URL?
     private var canvasShowsFull = false
+    /// The current photo plays as an animation, so decoded stills stay off the canvas.
+    private var isAnimating = false
     /// While a key is held, photos are decoded only where the user stops.
     private var lastNavigation: CFTimeInterval = 0
     private var pendingDecode: DispatchWorkItem?
@@ -313,7 +315,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         filmstrip.current = start
         updateInfoLabel(currentInfo)
         pipeline.keep([list[start]] + neighborURLs)
-        if pipeline.images[list[start]] != nil || currentInfo?.isAnimatable == true { preloadNeighbors() }
+        if pipeline.images[list[start]] != nil || isAnimating { preloadNeighbors() }
     }
 
     private func open(_ list: [URL], at start: Int) {
@@ -356,6 +358,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func display() {
         guard let url = currentURL else { return }
         generation += 1
+        isAnimating = false
         let gen = generation
 
         window?.title = url.lastPathComponent
@@ -404,6 +407,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 self.canvas.replaceContents(frame)
             }
             if status == noErr {
+                isAnimating = true
                 loadAround(url, decode: false, after: isKeyRepeat)
                 return
             }
@@ -441,7 +445,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func decoded(_ url: URL, _ tier: ImagePipeline.Tier, _ image: CGImage?) {
         // Until the info arrives the canvas can't size the photo; display() shows it then.
-        guard url == currentURL, let info = currentInfo, !info.isAnimatable else { return }
+        guard url == currentURL, currentInfo != nil, !isAnimating else { return }
         switch tier {
         case .screen:
             if let image {
@@ -487,7 +491,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// Keeps the current photo sharp: a bigger screen image when the space for it grows, and the
     /// full-resolution one only while zoomed in past the screen image.
     private func updateTiers() {
-        guard let url = currentURL, canvasURL == url, let info = currentInfo, !info.isAnimatable,
+        guard let url = currentURL, canvasURL == url, let info = currentInfo, !isAnimating,
               let screen = pipeline.images[url] else { return }
         let fullLong = min(max(info.pixelSize.width, info.pixelSize.height), CGFloat(ImageLoader.maxDecodedSide))
         let screenLong = CGFloat(max(screen.width, screen.height))
