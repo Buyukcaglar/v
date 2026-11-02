@@ -58,27 +58,27 @@ final class ImageCanvasView: NSView {
 
     // MARK: Content
 
-    func setImage(_ image: CGImage?, pixelSize size: CGSize, rotation: Int) {
+    func setImage(_ image: DecodedImage?, pixelSize size: CGSize, rotation: Int) {
         pixelSize = size.width > 0 ? size : CGSize(width: image?.width ?? 0, height: image?.height ?? 0)
         turns = rotation
         isFit = true
         pan = .zero
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        imageLayer.contents = image
+        imageLayer.contents = image?.contents
         CATransaction.commit()
         relayout(animated: false)
         if image != nil { growIn() }
     }
 
-    func replaceContents(_ image: CGImage) {
+    func replaceContents(_ image: DecodedImage) {
         if pixelSize.width == 0 {
             pixelSize = CGSize(width: image.width, height: image.height)
             relayout(animated: false)
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        imageLayer.contents = image
+        imageLayer.contents = image.contents
         CATransaction.commit()
         growIn()
     }

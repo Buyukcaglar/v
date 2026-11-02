@@ -9,10 +9,10 @@ final class ImagePipeline {
     enum Tier { case screen, full }
 
     /// Called on the main thread when a wanted image has been decoded, or failed (nil).
-    var onDecoded: ((URL, Tier, CGImage?) -> Void)?
+    var onDecoded: ((URL, Tier, DecodedImage?) -> Void)?
 
-    private(set) var images: [URL: CGImage] = [:]
-    private(set) var full: (url: URL, image: CGImage)?
+    private(set) var images: [URL: DecodedImage] = [:]
+    private(set) var full: (url: URL, image: DecodedImage)?
     private var pending: [Request: Operation] = [:]
     private var wanted: [URL] = []
     private let queue: OperationQueue = {
@@ -53,7 +53,7 @@ final class ImagePipeline {
         load(Request(url: url, tier: .full), first: true) { ImageLoader.fullImage(url) }
     }
 
-    private func load(_ request: Request, first: Bool, decode: @escaping @Sendable () -> CGImage?) {
+    private func load(_ request: Request, first: Bool, decode: @escaping @Sendable () -> DecodedImage?) {
         if let op = pending[request] {
             if first { op.queuePriority = .veryHigh }
             return
@@ -77,7 +77,7 @@ final class ImagePipeline {
         }
     }
 
-    private func finished(_ request: Request, _ image: CGImage?, _ op: Operation) {
+    private func finished(_ request: Request, _ image: DecodedImage?, _ op: Operation) {
         if pending[request] === op { pending[request] = nil }
         let url = request.url
         switch request.tier {

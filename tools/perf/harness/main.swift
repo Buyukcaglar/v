@@ -49,20 +49,24 @@ func views<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
     view.subviews.flatMap { ($0 as? T).map { [$0] } ?? views(of: type, in: $0) }
 }
 
-/// Widest CGImage anywhere in the layer tree: a filmstrip-sized thumbnail or the real photo.
+/// Widest image (CGImage or IOSurface) anywhere in the layer tree: a filmstrip-sized thumbnail or the real photo.
 func widestImage(in layer: CALayer?) -> Int {
     guard let layer else { return 0 }
     var widest = 0
-    if let contents = layer.contents, CFGetTypeID(contents as CFTypeRef) == CGImage.typeID { widest = (contents as! CGImage).width }
+    if let contents = layer.contents {
+        let type = CFGetTypeID(contents as CFTypeRef)
+        if type == CGImage.typeID { widest = (contents as! CGImage).width }
+        if type == IOSurfaceGetTypeID() { widest = IOSurfaceGetWidth(contents as! IOSurfaceRef) }
+    }
     return max(widest, (layer.sublayers ?? []).map { widestImage(in: $0) }.max() ?? 0)
 }
 
-/// Number of decoded photos the controller holds, if it keeps them in a [URL: CGImage], directly or
-/// in an object it owns.
+/// Number of decoded photos the controller holds, if it keeps them in a [URL: DecodedImage], directly
+/// or in an object it owns.
 func cachedPhotos(_ controller: AnyObject, depth: Int = 2) -> String {
     let children = Mirror(reflecting: controller).children
-    for child in children where type(of: child.value) == [URL: CGImage].self {
-        return "\((child.value as! [URL: CGImage]).count)"
+    for child in children where type(of: child.value) == [URL: DecodedImage].self {
+        return "\((child.value as! [URL: DecodedImage]).count)"
     }
     guard depth > 0 else { return "n/a" }
     for child in children where !(child.value is NSView) {
@@ -84,6 +88,23 @@ func repeatEvery(_ interval: TimeInterval, times: Int, _ body: @escaping (Int) -
     }
 }
 
+/// Longest gap between ticks of a 1 ms main-thread timer since the last reset: how long the main
+/// thread was busy at a stretch.
+final class StallMeter {
+    private(set) var longest: Double = 0
+    private var last = now()
+    init() {
+        let timer = Timer(timeInterval: 0.001, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let t = now()
+            self.longest = max(self.longest, t - self.last)
+            self.last = t
+        }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    func reset() { longest = 0; last = now() }
+}
+
 func waitUntil(_ condition: @escaping () -> Bool, then: @escaping () -> Void) {
     Timer.scheduledTimer(withTimeInterval: 0.002, repeats: true) { timer in
         if condition() { timer.invalidate(); then() }
@@ -96,6 +117,7 @@ app.setActivationPolicy(.accessory)
 DispatchQueue.main.asyncAfter(deadline: .now() + 60) { print("timed out"); exit(2) }
 /// Held for the whole run, as AppDelegate does; the animation callbacks only hold it weakly.
 var viewer: ViewerWindowController?
+let stalls = StallMeter()
 
 DispatchQueue.main.async {
     let atRunLoop = now()
@@ -104,6 +126,7 @@ DispatchQueue.main.async {
     let window = controller.window!
     window.alphaValue = 0
     window.ignoresMouseEvents = true
+    stalls.reset()
     let atShow = now()
     controller.show(urls: [target])
     let showMs = now() - atShow
@@ -126,7 +149,10 @@ DispatchQueue.main.async {
 
     var firstPixels: Double?
     waitUntil({
-        if firstPixels == nil, canvas.hasContents { firstPixels = now() }
+        if firstPixels == nil, canvas.hasContents {
+            firstPixels = now()
+            stalls.reset()  // past the window's first frame
+        }
         return widestImage(in: canvas.layer) >= 400
     }) {
         let f = footprint()
@@ -136,8 +162,8 @@ DispatchQueue.main.async {
         case "open", "launch":
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 let f = footprint()
-                print(String(format: "1 s later (neighbours preloaded): footprint %.0f MB · peak %.0f MB · threads %d · photos held %@",
-                             f.now, f.peak, threadCount(), cachedPhotos(controller)))
+                print(String(format: "1 s later (neighbours preloaded): footprint %.0f MB · peak %.0f MB · threads %d · photos held %@ · longest main-thread stall after first pixels %.0f ms",
+                             f.now, f.peak, threadCount(), cachedPhotos(controller), stalls.longest))
                 let label = views(of: NSTextField.self, in: window.contentView!).first { $0.stringValue.contains(" of ") }
                 print("label: \(label?.stringValue.replacingOccurrences(of: "     ", with: " · ") ?? "none")")
                 let strip = views(of: FilmstripView.self, in: window.contentView!).first!
@@ -154,11 +180,12 @@ DispatchQueue.main.async {
             let width = sideways ? h : w
             let fitted = widestImage(in: canvas.layer)
             let atZoom = now()
+            stalls.reset()
             controller.actualSize(nil)
             waitUntil({ widestImage(in: canvas.layer) >= width || now() - atZoom > 3000 }) {
                 let f = footprint()
-                print(String(format: "100 %%: contents %d px wide, photo %d px wide (fitted %d px) · %.0f ms · footprint %.0f MB",
-                             widestImage(in: canvas.layer), width, fitted, now() - atZoom, f.now))
+                print(String(format: "100 %%: contents %d px wide, photo %d px wide (fitted %d px) · %.0f ms · footprint %.0f MB · longest main-thread stall %.0f ms",
+                             widestImage(in: canvas.layer), width, fitted, now() - atZoom, f.now, stalls.longest))
                 controller.zoomToFit(nil)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     let f = footprint()

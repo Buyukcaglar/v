@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import IOSurface
 import UniformTypeIdentifiers
 
 struct ImageInfo {
@@ -8,6 +9,26 @@ struct ImageInfo {
     let frameCount: Int
     let fileSize: Int64?
     let isAnimatable: Bool
+}
+
+/// Pixels ready to become a layer's contents: a CGImage, or an IOSurface the window server
+/// uses as it is.
+struct DecodedImage: @unchecked Sendable {
+    let contents: AnyObject
+    let width: Int
+    let height: Int
+
+    init(_ image: CGImage) {
+        contents = image
+        width = image.width
+        height = image.height
+    }
+
+    init(_ surface: IOSurface) {
+        contents = surface
+        width = surface.width
+        height = surface.height
+    }
 }
 
 enum ImageLoader {
@@ -28,18 +49,22 @@ enum ImageLoader {
     }
 
     /// Full-resolution image with EXIF orientation applied.
-    static func fullImage(_ url: URL) -> CGImage? {
+    static func fullImage(_ url: URL) -> DecodedImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
         let props = Props(src)
         log("full", url)
-        return thumbnail(src, props, maxPixel: min(props.longSide, maxDecodedSide))
+        return prepared(thumbnail(src, props, maxPixel: min(props.longSide, maxDecodedSide)), src)
     }
 
     /// The image at the smallest size that still fills `box` (device pixels) when fitted,
     /// with EXIF orientation applied. JPEG decodes much faster at exact power-of-two fractions,
     /// so sizes are rounded up to one of those unless the format scales freely.
-    static func screenImage(_ url: URL, fitting box: CGSize) -> CGImage? {
+    static func screenImage(_ url: URL, fitting box: CGSize) -> DecodedImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        return prepared(screenCGImage(src, url, fitting: box), src)
+    }
+
+    private static func screenCGImage(_ src: CGImageSource, _ url: URL, fitting box: CGSize) -> CGImage? {
         let props = Props(src)
         log("screen", url)
         let long = min(props.longSide, maxDecodedSide)
@@ -84,6 +109,36 @@ enum ImageLoader {
         AAlEAcBhcshAUyQAAAAZaXBtYQAAAAAAAAABAAEGgQIDBYaEAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAAboAAAArAAAAAW1k
         YXQAAAAAAAAAOwAAACcoAa+ixkft2//+JRWypaJ+oHto45lf0CI62Cx9i6Hm1EaQ+PQI/mw=
         """
+
+    /// Core Animation copies a decoded JPEG on the main thread when it is first shown (17–22 ms for
+    /// a screen-sized one, ~55 ms at full size). Drawing it into an IOSurface here, on the decode
+    /// thread, makes showing it nearly free. HEIF decodes already arrive in a form CA uses as is,
+    /// and PNG costs little to show but much to redraw.
+    private static func prepared(_ image: CGImage?, _ src: CGImageSource) -> DecodedImage? {
+        guard let image else { return nil }
+        guard CGImageSourceGetType(src) as String? == "public.jpeg",
+              let surface = surface(for: image) else { return DecodedImage(image) }
+        return DecodedImage(surface)
+    }
+
+    private static func surface(for image: CGImage) -> IOSurface? {
+        let space = image.colorSpace?.model == .rgb ? image.colorSpace! : CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let surface = IOSurface(properties: [
+            .width: image.width, .height: image.height, .bytesPerElement: 4,
+            .pixelFormat: UInt32(kCVPixelFormatType_32BGRA),
+        ]) else { return nil }
+        // Without its colour space a surface is shown as sRGB, which would mute Display P3 photos.
+        if let plist = space.copyPropertyList() { IOSurfaceSetValue(surface, kIOSurfaceColorSpace, plist) }
+        surface.lock(options: [], seed: nil)
+        defer { surface.unlock(options: [], seed: nil) }
+        guard let ctx = CGContext(data: surface.baseAddress, width: image.width, height: image.height,
+                                  bitsPerComponent: 8, bytesPerRow: surface.bytesPerRow, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        ctx.setBlendMode(.copy)
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return surface
+    }
 
     /// Long side, in pixels, of `size` fitted into `box`, never enlarged.
     static func neededLongSide(_ size: CGSize, box: CGSize) -> Int {

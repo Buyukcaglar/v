@@ -398,13 +398,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
 
         if info.isAnimatable {
-            setCanvas(thumbCache.object(forKey: url as NSURL), of: url)
+            setCanvas(thumbCache.object(forKey: url as NSURL).map(DecodedImage.init), of: url)
             let status = CGAnimateImageAtURLWithBlock(url as CFURL, nil) { [weak self] _, frame, stop in
                 guard let self, self.generation == gen, self.window?.isVisible == true else {
                     stop.pointee = true
                     return
                 }
-                self.canvas.replaceContents(frame)
+                self.canvas.replaceContents(DecodedImage(frame))
             }
             if status == noErr {
                 isAnimating = true
@@ -418,7 +418,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         } else if let thumb = thumbCache.object(forKey: url as NSURL) {
             // Show the thumbnail while decoding; without one, keep the previous photo up until
             // the full image is ready.
-            setCanvas(thumb, of: url)
+            setCanvas(DecodedImage(thumb), of: url)
         }
         loadAround(url, decode: true, after: isKeyRepeat)
     }
@@ -443,7 +443,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
     }
 
-    private func decoded(_ url: URL, _ tier: ImagePipeline.Tier, _ image: CGImage?) {
+    private func decoded(_ url: URL, _ tier: ImagePipeline.Tier, _ image: DecodedImage?) {
         // Until the info arrives the canvas can't size the photo; display() shows it then.
         guard url == currentURL, currentInfo != nil, !isAnimating else { return }
         switch tier {
@@ -461,7 +461,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     /// Shows the decoded photo, in place of its thumbnail if that is up.
-    private func show(_ image: CGImage, of url: URL) {
+    private func show(_ image: DecodedImage, of url: URL) {
         if canvasURL == url {
             canvas.replaceContents(image)
             canvasShowsFull = false
@@ -470,7 +470,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
     }
 
-    private func setCanvas(_ image: CGImage?, of url: URL?) {
+    private func setCanvas(_ image: DecodedImage?, of url: URL?) {
         let info = url == currentURL ? currentInfo : nil
         canvas.setImage(image, pixelSize: info?.pixelSize ?? .zero, rotation: url.flatMap { rotations[$0] } ?? 0)
         canvasURL = url
@@ -583,7 +583,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         guard let thumb else { return }
         thumbCache.setObject(thumb, forKey: url as NSURL, cost: thumb.bytesPerRow * thumb.height)
         filmstrip.thumbnailsChanged()
-        if url == currentURL, canvasURL != url, currentInfo != nil { setCanvas(thumb, of: url) }
+        if url == currentURL, canvasURL != url, currentInfo != nil { setCanvas(DecodedImage(thumb), of: url) }
     }
 
     private func showMessage(_ text: String) {
