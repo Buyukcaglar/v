@@ -53,10 +53,20 @@ func widestImage(in layer: CALayer?) -> Int {
     return max(widest, (layer.sublayers ?? []).map { widestImage(in: $0) }.max() ?? 0)
 }
 
-/// Number of decoded photos the controller holds, if it still keeps them in a [URL: CGImage].
-func cachedPhotos(_ controller: AnyObject) -> String {
-    for child in Mirror(reflecting: controller).children where type(of: child.value) == [URL: CGImage].self {
+/// Number of decoded photos the controller holds, if it keeps them in a [URL: CGImage], directly or
+/// in an object it owns.
+func cachedPhotos(_ controller: AnyObject, depth: Int = 2) -> String {
+    let children = Mirror(reflecting: controller).children
+    for child in children where type(of: child.value) == [URL: CGImage].self {
         return "\((child.value as! [URL: CGImage]).count)"
+    }
+    guard depth > 0 else { return "n/a" }
+    for child in children where !(child.value is NSView) {
+        if type(of: child.value) is AnyClass {
+            let object = child.value as AnyObject
+            let n = cachedPhotos(object, depth: depth - 1)
+            if n != "n/a" { return n }
+        }
     }
     return "n/a"
 }

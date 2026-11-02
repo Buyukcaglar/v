@@ -33,6 +33,9 @@ enum ImageLoader {
 
     /// Full-resolution image with EXIF orientation applied.
     static func fullImage(_ url: URL) -> CGImage? {
+        #if DEBUG
+        FileHandle.standardError.write("decode full \(url.lastPathComponent)\n".data(using: .utf8)!)
+        #endif
         guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
         let idx = CGImageSourceGetPrimaryImageIndex(src)
         let props = CGImageSourceCopyPropertiesAtIndex(src, idx, nil) as? [CFString: Any] ?? [:]

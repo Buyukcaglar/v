@@ -26,10 +26,16 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var index = 0
     private var rotations: [URL: Int] = [:]
     private var generation = 0
-    private var fullCache: [URL: CGImage] = [:]
+    private let pipeline = ImagePipeline()
+    private var currentInfo: ImageInfo?
+    /// The photo whose pixels (thumbnail or decoded) the canvas shows.
+    private var canvasURL: URL?
+    /// While a key is held, photos are decoded only where the user stops.
+    private var lastNavigation: CFTimeInterval = 0
+    private var pendingDecode: DispatchWorkItem?
+    private var memoryPressure: DispatchSourceMemoryPressure?
     private let thumbCache = NSCache<NSURL, CGImage>()
     private var thumbsLoading = Set<URL>()
-    private let loadQueue = DispatchQueue(label: "viewer.load", qos: .userInitiated, attributes: .concurrent)
     private let thumbQueue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 4
@@ -59,6 +65,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         buildUI()
         updateForScreen()
         thumbCache.countLimit = 600
+        pipeline.onDecoded = { [weak self] in self?.decoded($0, $1) }
+        watchMemoryPressure()
         NotificationCenter.default.addObserver(self, selector: #selector(screenParametersChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
     }
@@ -238,7 +246,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return
         }
         files = list
-        fullCache.removeAll()
+        pipeline.keep([])
         thumbQueue.cancelAllOperations()
         thumbsLoading.removeAll()
         filmstrip.count = files.count
@@ -275,20 +283,27 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         thumbsLoading.removeAll()
 
         let info = ImageLoader.info(url)
+        currentInfo = info
         window?.title = url.lastPathComponent
         filmstrip.current = index
         messageLabel.isHidden = true
         updateInfoLabel(info)
+        pipeline.keep([url] + neighborURLs)
+        pendingDecode?.cancel()
+        let now = CACurrentMediaTime()
+        let isKeyRepeat = now - lastNavigation < 0.12
+        lastNavigation = now
 
         guard let info else {
-            canvas.setImage(nil, pixelSize: .zero, rotation: 0)
-            showMessage("Can’t open “\(url.lastPathComponent)”.")
+            showFailure(url)
+            loadAround(url, decode: false, after: isKeyRepeat)
             return
         }
 
         let rotation = rotations[url] ?? 0
         if info.isAnimatable {
             canvas.setImage(thumbCache.object(forKey: url as NSURL), pixelSize: info.pixelSize, rotation: rotation)
+            canvasURL = url
             let status = CGAnimateImageAtURLWithBlock(url as CFURL, nil) { [weak self] _, frame, stop in
                 guard let self, self.generation == gen, self.window?.isVisible == true else {
                     stop.pointee = true
@@ -296,37 +311,62 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 }
                 self.canvas.replaceContents(frame)
             }
-            if status == noErr { return }
-        }
-
-        if let full = fullCache[url] {
-            canvas.setImage(full, pixelSize: info.pixelSize, rotation: rotation)
-            preloadNeighbors()
-            return
-        }
-        // Show the thumbnail while decoding; without one, keep the previous photo up until
-        // the full image is ready.
-        let thumb = thumbCache.object(forKey: url as NSURL)
-        if let thumb { canvas.setImage(thumb, pixelSize: info.pixelSize, rotation: rotation) }
-        loadQueue.async { [weak self] in
-            let image = ImageLoader.fullImage(url)
-            DispatchQueue.main.async {
-                guard let self, self.generation == gen else { return }
-                if let image {
-                    self.fullCache[url] = image
-                    self.trimCache()
-                    if thumb != nil {
-                        self.canvas.replaceContents(image)
-                    } else {
-                        self.canvas.setImage(image, pixelSize: info.pixelSize, rotation: rotation)
-                    }
-                    self.preloadNeighbors()
-                } else {
-                    self.canvas.setImage(nil, pixelSize: .zero, rotation: 0)
-                    self.showMessage("Can’t open “\(url.lastPathComponent)”.")
-                }
+            if status == noErr {
+                loadAround(url, decode: false, after: isKeyRepeat)
+                return
             }
         }
+
+        if let image = pipeline.images[url] {
+            show(image, of: url)
+        } else if let thumb = thumbCache.object(forKey: url as NSURL) {
+            // Show the thumbnail while decoding; without one, keep the previous photo up until
+            // the full image is ready.
+            canvas.setImage(thumb, pixelSize: info.pixelSize, rotation: rotation)
+            canvasURL = url
+        }
+        loadAround(url, decode: true, after: isKeyRepeat)
+    }
+
+    /// Decodes the current photo, or once it is ready its neighbours. While a key is held this
+    /// waits until the user stops.
+    private func loadAround(_ url: URL, decode: Bool, after isKeyRepeat: Bool) {
+        let load = { [weak self] in
+            guard let self else { return }
+            if decode && self.pipeline.images[url] == nil {
+                self.pipeline.load(url, first: true)
+            } else {
+                self.preloadNeighbors()
+            }
+        }
+        if isKeyRepeat {
+            let work = DispatchWorkItem(block: load)
+            pendingDecode = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+        } else {
+            load()
+        }
+    }
+
+    private func decoded(_ url: URL, _ image: CGImage?) {
+        guard url == currentURL, currentInfo?.isAnimatable != true else { return }
+        if let image { show(image, of: url) } else { showFailure(url) }
+        preloadNeighbors()
+    }
+
+    private func show(_ image: CGImage, of url: URL) {
+        if canvasURL == url {
+            canvas.replaceContents(image)
+        } else {
+            canvas.setImage(image, pixelSize: currentInfo?.pixelSize ?? .zero, rotation: rotations[url] ?? 0)
+            canvasURL = url
+        }
+    }
+
+    private func showFailure(_ url: URL) {
+        canvas.setImage(nil, pixelSize: .zero, rotation: 0)
+        canvasURL = nil
+        showMessage("Can’t open “\(url.lastPathComponent)”.")
     }
 
     private var neighborURLs: [URL] {
@@ -334,21 +374,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         return [1, -1].map { files[(index + $0 + files.count) % files.count] }
     }
 
-    private func trimCache() {
-        let keep = Set([currentURL].compactMap { $0 } + neighborURLs)
-        fullCache = fullCache.filter { keep.contains($0.key) }
+    private func preloadNeighbors() {
+        for url in neighborURLs { pipeline.load(url, first: false) }
     }
 
-    private func preloadNeighbors() {
-        for url in neighborURLs where fullCache[url] == nil {
-            loadQueue.async { [weak self] in
-                guard let image = ImageLoader.fullImage(url) else { return }
-                DispatchQueue.main.async {
-                    guard let self, self.neighborURLs.contains(url) else { return }
-                    self.fullCache[url] = image
-                }
-            }
+    private func watchMemoryPressure() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self, weak source] in
+            guard let self, let source else { return }
+            self.pipeline.keep([self.currentURL].compactMap { $0 })
+            if source.data.contains(.critical) { self.thumbCache.removeAllObjects() }
         }
+        source.resume()
+        memoryPressure = source
     }
 
     private func thumbnail(at i: Int) -> CGImage? {
@@ -365,7 +403,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                     guard let thumb else { return }
                     self.thumbCache.setObject(thumb, forKey: url as NSURL)
                     self.filmstrip.needsDisplay = true
-                    if url == self.currentURL, !self.canvas.hasContents { self.canvas.replaceContents(thumb) }
+                    if url == self.currentURL, self.canvasURL != url, let info = self.currentInfo {
+                        self.canvas.setImage(thumb, pixelSize: info.pixelSize, rotation: self.rotations[url] ?? 0)
+                        self.canvasURL = url
+                    }
                 }
             }
         }
@@ -507,7 +548,6 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return
         }
         files.remove(at: index)
-        fullCache[url] = nil
         thumbCache.removeObject(forKey: url as NSURL)
         rotations[url] = nil
         if files.isEmpty {
@@ -573,6 +613,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     func windowWillClose(_ notification: Notification) {
         thumbQueue.cancelAllOperations()
+        memoryPressure?.cancel()
         NotificationCenter.default.removeObserver(self)
         onClose?()
     }
