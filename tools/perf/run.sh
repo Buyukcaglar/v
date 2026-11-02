@@ -35,7 +35,7 @@ fi
 
 if [[ $WHAT == (app|all) ]]; then
   srcs=(Sources/*.swift)
-  swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos13.0" -o "$OUT/harness" ${srcs:#*/main.swift} tools/perf/harness/main.swift
+  swiftc -O -wmo -swift-version 5 -target "$(uname -m)-apple-macos13.0" -Xlinker -dead_strip -o "$OUT/harness" ${srcs:#*/main.swift} tools/perf/harness/main.swift
   run() { echo "-- $1 ${2:t}"; "$OUT/harness" "$1" "$DATA/$2" }
   "$OUT/harness" open "$DATA/photos/IMG_0002.jpg" >/dev/null  # the first launch of a new binary pays for dyld and signature checks
   echo "== The real viewer code, invisible window"

@@ -65,8 +65,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         self.init(pipeline: pipeline)
     }
 
-    init(pipeline: ImagePipeline = ImagePipeline()) {
-        self.pipeline = pipeline
+    init(pipeline: ImagePipeline? = nil) {
+        self.pipeline = pipeline ?? ImagePipeline()
         // During a display change there can briefly be no screen; updateForScreen() catches up.
         let frame = Self.screenForNewWindow?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let window = ViewerWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -83,7 +83,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         buildUI()
         updateForScreen()
         thumbCache.totalCostLimit = 8 << 20
-        pipeline.onDecoded = { [weak self] in self?.decoded($0, $1, $2) }
+        self.pipeline.onDecoded = { [weak self] in self?.decoded($0, $1, $2) }
         watchMemoryPressure()
         NotificationCenter.default.addObserver(self, selector: #selector(screenParametersChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -367,6 +367,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let now = CACurrentMediaTime()
         let isKeyRepeat = now - lastNavigation < 0.12
         lastNavigation = now
+        // The decode needs only the space on screen, so it need not wait for the info.
+        if !isKeyRepeat { pipeline.loadScreen(url, box: fitBox(for: url), first: true) }
 
         if let info = infos[url] {
             display(url, info, isKeyRepeat: isKeyRepeat)
@@ -438,7 +440,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func decoded(_ url: URL, _ tier: ImagePipeline.Tier, _ image: CGImage?) {
-        guard url == currentURL, currentInfo?.isAnimatable != true else { return }
+        // Until the info arrives the canvas can't size the photo; display() shows it then.
+        guard url == currentURL, let info = currentInfo, !info.isAnimatable else { return }
         switch tier {
         case .screen:
             if let image {
@@ -741,8 +744,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func restartSlideshowTimer() {
         slideshowTimer?.invalidate()
         slideshowTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.go(to: self.index + 1)
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.go(to: self.index + 1)
+            }
         }
         slideshowTimer?.tolerance = 0.1
     }
@@ -788,7 +793,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             $0.timingFunction = ImageCanvasView.closeEasing
             for v in fadingViews { v.animator().alphaValue = 0 }
         }, completionHandler: { [weak self] in
-            if self?.closeCount == close, self?.isClosing == true { window.close() }
+            MainActor.assumeIsolated {
+                if self?.closeCount == close, self?.isClosing == true { window.close() }
+            }
         })
     }
 
@@ -827,7 +834,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 /// Supplies a copied file's bytes when they are pasted.
 private final class FileDataProvider: NSObject, NSPasteboardItemDataProvider {
     /// Held until the pasteboard is done with it, which can be after the viewer has closed.
-    static var current: FileDataProvider?
+    nonisolated(unsafe) static var current: FileDataProvider?
     let url: URL
 
     init(url: URL) { self.url = url }

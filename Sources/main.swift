@@ -10,6 +10,8 @@ if CommandLine.arguments.contains("--make-default") {
     exit(failures.isEmpty ? 0 : 1)
 }
 
-let delegate = AppDelegate()
-NSApplication.shared.delegate = delegate
-NSApplication.shared.run()
+MainActor.assumeIsolated {
+    let delegate = AppDelegate()
+    NSApplication.shared.delegate = delegate
+    withExtendedLifetime(delegate) { NSApplication.shared.run() }
+}

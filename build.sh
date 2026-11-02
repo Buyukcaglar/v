@@ -9,10 +9,11 @@ rm -rf "$APP" build.noindex/obj
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" build.noindex/obj
 
 for arch in arm64 x86_64; do
-  swiftc -O -swift-version 5 -target "$arch-apple-macos13.0" \
+  swiftc -O -wmo -swift-version 5 -target "$arch-apple-macos13.0" -Xlinker -dead_strip \
     -o "build.noindex/obj/viewer-$arch" Sources/*.swift
 done
 lipo -create build.noindex/obj/viewer-* -output "$APP/Contents/MacOS/V"
+strip -x "$APP/Contents/MacOS/V"
 
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"

@@ -3,8 +3,8 @@ import CoreGraphics
 
 /// Decodes photos off the main thread, a couple at a time, and holds only the ones the
 /// viewer can show next: a screen-sized image of the current photo and its neighbours, and
-/// a full-resolution one of the current photo while it is zoomed in. Call it from the main
-/// thread only.
+/// a full-resolution one of the current photo while it is zoomed in.
+@MainActor
 final class ImagePipeline {
     enum Tier { case screen, full }
 
@@ -53,7 +53,7 @@ final class ImagePipeline {
         load(Request(url: url, tier: .full), first: true) { ImageLoader.fullImage(url) }
     }
 
-    private func load(_ request: Request, first: Bool, decode: @escaping () -> CGImage?) {
+    private func load(_ request: Request, first: Bool, decode: @escaping @Sendable () -> CGImage?) {
         if let op = pending[request] {
             if first { op.queuePriority = .veryHigh }
             return
