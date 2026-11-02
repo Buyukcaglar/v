@@ -3,15 +3,9 @@ import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var viewer: ViewerWindowController?
-    private var openedSomething = false
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.make()
-        // Launched from the Dock or Launchpad rather than with a file: ask for one.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self, !self.openedSomething else { return }
-            self.openDocument(nil)
-        }
     }
 
     func application(_ sender: NSApplication, open urls: [URL]) {
@@ -20,13 +14,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { openDocument(nil) }
+    // AppKit asks for an untitled document only when the app is launched or reopened (from the
+    // Dock or Launchpad) without files to open: ask for some.
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { true }
+
+    func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        openDocument(nil)
         return true
     }
 
     private func open(_ urls: [URL]) {
-        openedSomething = true
         let viewer = self.viewer ?? ViewerWindowController(opening: urls)
         if self.viewer == nil {
             viewer.onClose = { [weak self] in self?.viewer = nil }
@@ -37,9 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openDocument(_ sender: Any?) {
-        openedSomething = true
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image, .folder]
+        panel.allowedContentTypes = ImageLoader.decodableTypes + [.folder]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.message = "Choose photos or a folder to view"
@@ -128,13 +124,7 @@ enum MainMenu {
 }
 
 enum DefaultViewer {
-    /// Every image type ImageIO can decode on this Mac (JPEG, PNG, HEIC, WebP, camera RAW, …).
-    static var imageTypes: [UTType] {
-        let ids = (CGImageSourceCopyTypeIdentifiers() as? [String]) ?? []
-        var seen = Set<String>()
-        return (ids.compactMap(UTType.init) + [.image])
-            .filter { $0.conforms(to: .image) && seen.insert($0.identifier).inserted }
-    }
+    static var imageTypes: [UTType] { ImageLoader.decodableTypes }
 
     /// Makes this app the default for every image type in one step. Asking Launch Services
     /// type by type (LSSetDefaultRoleHandlerForContentType) makes current macOS show a

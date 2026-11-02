@@ -21,6 +21,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var closeButton: NSButton!
     private var safeConstraints: [NSLayoutConstraint] = []  // top, bottom, leading, trailing
     private var isClosing = false
+    private var closeCount = 0
 
     private var files: [URL] = []
     private var index = 0
@@ -48,6 +49,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }()
 
     private var slideshowTimer: Timer?
+    private var slideshowActivity: NSObjectProtocol?
     private var isSlideshow: Bool { slideshowTimer != nil }
 
     private static let chromeHeight: CGFloat = 118
@@ -58,16 +60,17 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let pipeline = ImagePipeline()
         if urls.count == 1, let url = urls.first, !ImageLoader.isDirectory(url) {
             pipeline.keep([url])
-            pipeline.loadScreen(url, box: Self.fitBox(on: Self.screenForNewWindow), first: true)
+            pipeline.loadScreen(url, box: Self.screenForNewWindow.map(Self.fitBox) ?? CGSize(width: 2560, height: 1600), first: true)
         }
         self.init(pipeline: pipeline)
     }
 
     init(pipeline: ImagePipeline = ImagePipeline()) {
         self.pipeline = pipeline
-        let screen = Self.screenForNewWindow
-        let window = ViewerWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.setFrame(screen.frame, display: false)
+        // During a display change there can briefly be no screen; updateForScreen() catches up.
+        let frame = Self.screenForNewWindow?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let window = ViewerWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.setFrame(frame, display: false)
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
@@ -229,8 +232,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     /// The screen with the pointer, where the viewer opens.
-    private static var screenForNewWindow: NSScreen {
-        NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main!
+    private static var screenForNewWindow: NSScreen? {
+        NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
     }
 
     private var screenInsets: NSEdgeInsets {
@@ -279,6 +282,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// Shows a single photo at once and lists its folder in the background; folders and
     /// several items appear once they are listed.
     func show(urls: [URL]) {
+        if isClosing { cancelClose() }
         listing += 1
         let token = listing
         if urls.count == 1, let file = urls.first, !ImageLoader.isDirectory(file) {
@@ -595,7 +599,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func updateZoomLabel() {
-        zoomLabel.stringValue = "\(Int((canvas.zoom * 100).rounded()))%"
+        let text = "\(Int((canvas.zoom * 100).rounded()))%"
+        if zoomLabel.stringValue != text { zoomLabel.stringValue = text }
     }
 
     // MARK: Navigation
@@ -642,8 +647,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         switch event.charactersIgnoringModifiers {
         case "+", "=": canvas.zoomIn()
         case "-", "_": canvas.zoomOut()
-        case "0": canvas.zoomToFit()
-        case "1": canvas.zoomToActualSize()
+        case "0", "1": canvas.zoomToActualSize()  // as ⌘0
+        case "9": canvas.zoomToFit()  // as ⌘9
         default: return false
         }
         return true
@@ -680,16 +685,16 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    /// Puts the file on the pasteboard at once; its bytes, in their own format, are read only
+    /// when an app pastes them.
     @objc func copy(_ sender: Any?) {
         guard let url = currentURL else { return }
         let item = NSPasteboardItem()
         item.setString(url.absoluteString, forType: .fileURL)
-        if let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType,
-           type.conforms(to: .png) || type.conforms(to: .jpeg) || type.conforms(to: .tiff),
-           let data = try? Data(contentsOf: url) {
-            item.setData(data, forType: NSPasteboard.PasteboardType(type.identifier))
-        } else if let tiff = NSImage(contentsOf: url)?.tiffRepresentation {
-            item.setData(tiff, forType: .tiff)
+        if let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType {
+            let provider = FileDataProvider(url: url)
+            item.setDataProvider(provider, forTypes: [NSPasteboard.PasteboardType(type.identifier)])
+            FileDataProvider.current = provider
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([item])
@@ -727,6 +732,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func startSlideshow() {
         guard files.count > 1 else { return }
         restartSlideshowTimer()
+        slideshowActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.idleDisplaySleepDisabled, .userInitiated], reason: "Slideshow")
         setChromeHidden(true)
         NSCursor.setHiddenUntilMouseMoves(true)
     }
@@ -737,12 +744,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             guard let self else { return }
             self.go(to: self.index + 1)
         }
+        slideshowTimer?.tolerance = 0.1
     }
 
     private func stopSlideshow() {
         slideshowTimer?.invalidate()
         slideshowTimer = nil
+        endSlideshowActivity()
         setChromeHidden(false)
+    }
+
+    private func endSlideshowActivity() {
+        if let slideshowActivity { ProcessInfo.processInfo.endActivity(slideshowActivity) }
+        slideshowActivity = nil
     }
 
     private func setChromeHidden(_ hidden: Bool) {
@@ -759,18 +773,35 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         isClosing = true
         slideshowTimer?.invalidate()
         slideshowTimer = nil
+        endSlideshowActivity()
         generation += 1
         guard let window, window.isVisible else {
             self.window?.close()
             return
         }
         // The photo shrinks back into the middle while the dimming lifts.
+        closeCount += 1
+        let close = closeCount
         canvas.playClose()
         NSAnimationContext.runAnimationGroup({
             $0.duration = ImageCanvasView.closeDuration
             $0.timingFunction = ImageCanvasView.closeEasing
             for v in fadingViews { v.animator().alphaValue = 0 }
-        }, completionHandler: { window.close() })
+        }, completionHandler: { [weak self] in
+            if self?.closeCount == close, self?.isClosing == true { window.close() }
+        })
+    }
+
+    /// A photo opened while the viewer is closing keeps it open; it grows in like on opening.
+    private func cancelClose() {
+        isClosing = false
+        closeCount += 1
+        NSAnimationContext.runAnimationGroup {
+            $0.duration = 0.25
+            $0.timingFunction = ImageCanvasView.openEasing
+            for v in fadingViews { v.animator().alphaValue = 1 }
+        }
+        canvas.playOpen()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -790,5 +821,22 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         default:
             return currentURL != nil || item.action == #selector(closeViewer(_:))
         }
+    }
+}
+
+/// Supplies a copied file's bytes when they are pasted.
+private final class FileDataProvider: NSObject, NSPasteboardItemDataProvider {
+    /// Held until the pasteboard is done with it, which can be after the viewer has closed.
+    static var current: FileDataProvider?
+    let url: URL
+
+    init(url: URL) { self.url = url }
+
+    func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
+        if let data = try? Data(contentsOf: url, options: .mappedIfSafe) { item.setData(data, forType: type) }
+    }
+
+    func pasteboardFinishedWithDataProvider(_ pasteboard: NSPasteboard) {
+        if Self.current === self { Self.current = nil }
     }
 }

@@ -205,7 +205,9 @@ final class ImageCanvasView: NSView {
         pan.y = min(max(pan.y, -maxY), maxY)
     }
 
-    private func relayout(animated: Bool) {
+    /// Panning moves the photo under a cursor rect that stays put, so it leaves the cursor
+    /// rects alone until it ends.
+    private func relayout(animated: Bool, panning: Bool = false) {
         if isFit {
             zoom = fitZoom
             pan = .zero
@@ -225,7 +227,7 @@ final class ImageCanvasView: NSView {
         imageLayer.setAffineTransform(CGAffineTransform(rotationAngle: -CGFloat(turns) * .pi / 2))
         imageLayer.magnificationFilter = zoom >= 3 ? .nearest : .linear
         CATransaction.commit()
-        window?.invalidateCursorRects(for: self)
+        if !panning { window?.invalidateCursorRects(for: self) }
         onViewChange?()
     }
 
@@ -250,7 +252,7 @@ final class ImageCanvasView: NSView {
         didDrag = true
         pan.x += event.deltaX
         pan.y -= event.deltaY
-        relayout(animated: false)
+        relayout(animated: false, panning: true)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -282,7 +284,7 @@ final class ImageCanvasView: NSView {
         } else if canPan {
             pan.x += event.scrollingDeltaX
             pan.y -= event.scrollingDeltaY
-            relayout(animated: false)
+            relayout(animated: false, panning: event.phase != .ended && event.momentumPhase != .ended)
         } else if event.momentumPhase.isEmpty {
             // Two-finger horizontal swipe flips through photos when nothing is zoomed.
             if event.phase == .began { swipeAccum = 0; swipeFired = false }
