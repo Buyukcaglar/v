@@ -26,6 +26,8 @@ final class ImageCanvasView: NSView {
 
     private let imageLayer = CALayer()
     private var pixelSize: CGSize = .zero
+    /// EXIF orientation of the pixels on the layer; the layer transform turns them upright.
+    private var contentsOrientation = 1
     private var turns = 0
     private(set) var zoom: CGFloat = 1
     private(set) var isFit = true
@@ -59,7 +61,8 @@ final class ImageCanvasView: NSView {
     // MARK: Content
 
     func setImage(_ image: DecodedImage?, pixelSize size: CGSize, rotation: Int) {
-        pixelSize = size.width > 0 ? size : CGSize(width: image?.width ?? 0, height: image?.height ?? 0)
+        pixelSize = size.width > 0 ? size : image?.uprightSize ?? .zero
+        contentsOrientation = image?.orientation ?? 1
         turns = rotation
         isFit = true
         pan = .zero
@@ -72,12 +75,13 @@ final class ImageCanvasView: NSView {
     }
 
     func replaceContents(_ image: DecodedImage) {
-        if pixelSize.width == 0 {
-            pixelSize = CGSize(width: image.width, height: image.height)
-            relayout(animated: false)
-        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        if pixelSize.width == 0 || image.orientation != contentsOrientation {
+            if pixelSize.width == 0 { pixelSize = image.uprightSize }
+            contentsOrientation = image.orientation
+            relayout(animated: false)
+        }
         imageLayer.contents = image.contents
         CATransaction.commit()
         growIn()
@@ -117,6 +121,21 @@ final class ImageCanvasView: NSView {
     private var collapsedBounds: CGRect {
         let b = imageLayer.bounds
         return CGRect(x: 0, y: 0, width: b.width * Self.collapsedScale, height: b.height * Self.collapsedScale)
+    }
+
+    /// Turns or mirrors pixels stored in EXIF orientation `orientation` upright, in the layer's
+    /// y-up coordinates.
+    static func transform(forOrientation orientation: Int) -> CGAffineTransform {
+        switch orientation {
+        case 2: return CGAffineTransform(scaleX: -1, y: 1)
+        case 3: return CGAffineTransform(rotationAngle: .pi)
+        case 4: return CGAffineTransform(scaleX: 1, y: -1)
+        case 5: return CGAffineTransform(a: 0, b: -1, c: -1, d: 0, tx: 0, ty: 0)  // transpose
+        case 6: return CGAffineTransform(rotationAngle: -.pi / 2)
+        case 7: return CGAffineTransform(a: 0, b: 1, c: 1, d: 0, tx: 0, ty: 0)  // transverse
+        case 8: return CGAffineTransform(rotationAngle: .pi / 2)
+        default: return .identity
+        }
     }
 
     func rotate(by quarterTurns: Int) {
@@ -222,9 +241,12 @@ final class ImageCanvasView: NSView {
         } else {
             CATransaction.setDisableActions(true)
         }
-        imageLayer.bounds = CGRect(x: 0, y: 0, width: pixelSize.width * ppp, height: pixelSize.height * ppp)
+        // The layer holds the pixels as stored; the transform turns them upright, then by the user's turns.
+        let stored = contentsOrientation >= 5 ? CGSize(width: pixelSize.height, height: pixelSize.width) : pixelSize
+        imageLayer.bounds = CGRect(x: 0, y: 0, width: stored.width * ppp, height: stored.height * ppp)
         imageLayer.position = CGPoint(x: a.midX + pan.x, y: a.midY + pan.y)
-        imageLayer.setAffineTransform(CGAffineTransform(rotationAngle: -CGFloat(turns) * .pi / 2))
+        imageLayer.setAffineTransform(Self.transform(forOrientation: contentsOrientation)
+            .concatenating(CGAffineTransform(rotationAngle: -CGFloat(turns) * .pi / 2)))
         imageLayer.magnificationFilter = zoom >= 3 ? .nearest : .linear
         CATransaction.commit()
         if !panning { window?.invalidateCursorRects(for: self) }

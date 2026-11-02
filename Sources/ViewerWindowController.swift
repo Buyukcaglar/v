@@ -398,7 +398,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
 
         if info.isAnimatable {
-            setCanvas(thumbCache.object(forKey: url as NSURL).map(DecodedImage.init), of: url)
+            setCanvas(thumbCache.object(forKey: url as NSURL).map { DecodedImage($0) }, of: url)
             let status = CGAnimateImageAtURLWithBlock(url as CFURL, nil) { [weak self] _, frame, stop in
                 guard let self, self.generation == gen, self.window?.isVisible == true else {
                     stop.pointee = true

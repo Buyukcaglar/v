@@ -49,16 +49,17 @@ func views<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
     view.subviews.flatMap { ($0 as? T).map { [$0] } ?? views(of: type, in: $0) }
 }
 
-/// Widest image (CGImage or IOSurface) anywhere in the layer tree: a filmstrip-sized thumbnail or the real photo.
-func widestImage(in layer: CALayer?) -> Int {
+/// Longest side of the largest image (CGImage or IOSurface) anywhere in the layer tree: a
+/// filmstrip-sized thumbnail or the real photo, which may be stored sideways.
+func longestImageSide(in layer: CALayer?) -> Int {
     guard let layer else { return 0 }
     var widest = 0
     if let contents = layer.contents {
         let type = CFGetTypeID(contents as CFTypeRef)
-        if type == CGImage.typeID { widest = (contents as! CGImage).width }
-        if type == IOSurfaceGetTypeID() { widest = IOSurfaceGetWidth(contents as! IOSurfaceRef) }
+        if type == CGImage.typeID { widest = max((contents as! CGImage).width, (contents as! CGImage).height) }
+        if type == IOSurfaceGetTypeID() { widest = max(IOSurfaceGetWidth(contents as! IOSurfaceRef), IOSurfaceGetHeight(contents as! IOSurfaceRef)) }
     }
-    return max(widest, (layer.sublayers ?? []).map { widestImage(in: $0) }.max() ?? 0)
+    return max(widest, (layer.sublayers ?? []).map { longestImageSide(in: $0) }.max() ?? 0)
 }
 
 /// Number of decoded photos the controller holds, if it keeps them in a [URL: DecodedImage], directly
@@ -153,7 +154,7 @@ DispatchQueue.main.async {
             firstPixels = now()
             stalls.reset()  // past the window's first frame
         }
-        return widestImage(in: canvas.layer) >= 400
+        return longestImageSide(in: canvas.layer) >= 400
     }) {
         let f = footprint()
         print(String(format: "first pixels %.0f ms after show · sharp photo %.0f ms after show (%.0f ms after launch) · footprint %.0f MB",
@@ -176,21 +177,20 @@ DispatchQueue.main.async {
             let src = CGImageSourceCreateWithURL(target as CFURL, nil)!
             let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as! [CFString: Any]
             let w = (props[kCGImagePropertyPixelWidth] as! NSNumber).intValue, h = (props[kCGImagePropertyPixelHeight] as! NSNumber).intValue
-            let sideways = ((props[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1) >= 5
-            let width = sideways ? h : w
-            let fitted = widestImage(in: canvas.layer)
+            let long = max(w, h)
+            let fitted = longestImageSide(in: canvas.layer)
             let atZoom = now()
             stalls.reset()
             controller.actualSize(nil)
-            waitUntil({ widestImage(in: canvas.layer) >= width || now() - atZoom > 3000 }) {
+            waitUntil({ longestImageSide(in: canvas.layer) >= long || now() - atZoom > 3000 }) {
                 let f = footprint()
-                print(String(format: "100 %%: contents %d px wide, photo %d px wide (fitted %d px) · %.0f ms · footprint %.0f MB · longest main-thread stall %.0f ms",
-                             widestImage(in: canvas.layer), width, fitted, now() - atZoom, f.now, stalls.longest))
+                print(String(format: "100 %%: contents %d px on the long side, photo %d px (fitted %d px) · %.0f ms · footprint %.0f MB · longest main-thread stall %.0f ms",
+                             longestImageSide(in: canvas.layer), long, fitted, now() - atZoom, f.now, stalls.longest))
                 controller.zoomToFit(nil)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     let f = footprint()
-                    print(String(format: "back to fit: contents %d px wide · footprint %.0f MB · peak %.0f MB",
-                                 widestImage(in: canvas.layer), f.now, f.peak))
+                    print(String(format: "back to fit: contents %d px · footprint %.0f MB · peak %.0f MB",
+                                 longestImageSide(in: canvas.layer), f.now, f.peak))
                     exit(0)
                 }
             }

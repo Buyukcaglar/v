@@ -12,22 +12,30 @@ struct ImageInfo {
 }
 
 /// Pixels ready to become a layer's contents: a CGImage, or an IOSurface the window server
-/// uses as it is.
+/// uses as it is. They are stored as the file stores them; `orientation` (EXIF, 1–8) says how to
+/// turn them upright.
 struct DecodedImage: @unchecked Sendable {
     let contents: AnyObject
     let width: Int
     let height: Int
+    let orientation: Int
 
-    init(_ image: CGImage) {
+    init(_ image: CGImage, orientation: Int = 1) {
         contents = image
         width = image.width
         height = image.height
+        self.orientation = orientation
     }
 
-    init(_ surface: IOSurface) {
+    init(_ surface: IOSurface, orientation: Int) {
         contents = surface
         width = surface.width
         height = surface.height
+        self.orientation = orientation
+    }
+
+    var uprightSize: CGSize {
+        orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
     }
 }
 
@@ -48,25 +56,31 @@ enum ImageLoader {
         return ImageInfo(pixelSize: props.orientedSize, frameCount: count, fileSize: fileSize, isAnimatable: count > 1)
     }
 
-    /// Full-resolution image with EXIF orientation applied.
+    // Decoded images keep the file's pixel orientation: the canvas turns them upright with a
+    // layer transform, which costs nothing, where ImageIO would rotate the bitmap on the CPU.
+
+    /// The image at full resolution.
     static func fullImage(_ url: URL) -> DecodedImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
         let props = Props(src)
         log("full", url)
-        return prepared(thumbnail(src, props, maxPixel: min(props.longSide, maxDecodedSide)), src)
+        let image = props.longSide <= maxDecodedSide
+            ? CGImageSourceCreateImageAtIndex(src, props.index, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+            : thumbnail(src, props, maxPixel: maxDecodedSide)
+        return prepared(image, src, props)
     }
 
-    /// The image at the smallest size that still fills `box` (device pixels) when fitted,
-    /// with EXIF orientation applied. JPEG decodes much faster at exact power-of-two fractions,
-    /// so sizes are rounded up to one of those unless the format scales freely.
+    /// The image at the smallest size that still fills `box` (device pixels) when fitted. JPEG
+    /// decodes much faster at exact power-of-two fractions, so sizes are rounded up to one of
+    /// those unless the format scales freely.
     static func screenImage(_ url: URL, fitting box: CGSize) -> DecodedImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
-        return prepared(screenCGImage(src, url, fitting: box), src)
-    }
-
-    private static func screenCGImage(_ src: CGImageSource, _ url: URL, fitting box: CGSize) -> CGImage? {
         let props = Props(src)
         log("screen", url)
+        return prepared(screenCGImage(src, props, fitting: box), src, props)
+    }
+
+    private static func screenCGImage(_ src: CGImageSource, _ props: Props, fitting box: CGSize) -> CGImage? {
         let long = min(props.longSide, maxDecodedSide)
         let needed = neededLongSide(props.orientedSize, box: box)
         guard needed < long else { return thumbnail(src, props, maxPixel: long) }
@@ -74,8 +88,8 @@ enum ImageLoader {
         if freelyScaledTypes.contains(type) { return thumbnail(src, props, maxPixel: needed) }
         var factor = 1
         while props.longSide / (factor * 2) >= needed { factor *= 2 }
-        // Subsampling skips the transform and the scaler, and needs far less scratch memory.
-        if props.orientation == 1, factor <= 8, subsampledTypes.contains(type), props.longSide / factor <= maxDecodedSide,
+        // Subsampling skips the scaler and needs far less scratch memory.
+        if factor <= 8, subsampledTypes.contains(type), props.longSide / factor <= maxDecodedSide,
            let img = CGImageSourceCreateImageAtIndex(src, props.index, [
                kCGImageSourceSubsampleFactor: factor,
                kCGImageSourceShouldCacheImmediately: true,
@@ -114,11 +128,11 @@ enum ImageLoader {
     /// a screen-sized one, ~55 ms at full size). Drawing it into an IOSurface here, on the decode
     /// thread, makes showing it nearly free. HEIF decodes already arrive in a form CA uses as is,
     /// and PNG costs little to show but much to redraw.
-    private static func prepared(_ image: CGImage?, _ src: CGImageSource) -> DecodedImage? {
+    private static func prepared(_ image: CGImage?, _ src: CGImageSource, _ props: Props) -> DecodedImage? {
         guard let image else { return nil }
         guard CGImageSourceGetType(src) as String? == "public.jpeg",
-              let surface = surface(for: image) else { return DecodedImage(image) }
-        return DecodedImage(surface)
+              let surface = surface(for: image) else { return DecodedImage(image, orientation: props.orientation) }
+        return DecodedImage(surface, orientation: props.orientation)
     }
 
     private static func surface(for image: CGImage) -> IOSurface? {
@@ -172,7 +186,6 @@ enum ImageLoader {
         if maxPixel > 0 {
             let opts: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: maxPixel,
                 kCGImageSourceShouldCacheImmediately: true,
             ]
