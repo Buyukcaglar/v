@@ -46,5 +46,7 @@ if [[ $WHAT == (app|all) ]]; then
   run pace photos/IMG_0001.jpg
   run burst photos/IMG_0001.jpg
   run burst heic/IMG_0001.heic
+  run zoom photos/IMG_0001.jpg
+  run zoom photos/IMG_0006.jpg
   run gif gif/anim.gif
 fi

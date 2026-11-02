@@ -135,6 +135,12 @@ final class ImageCanvasView: NSView {
                       height: max(bounds.height - i.top - i.bottom, 1))
     }
 
+    /// Where the fitted photo goes, in device pixels.
+    var fitBox: CGSize {
+        let a = availRect
+        return CGSize(width: a.width * backingScale, height: a.height * backingScale)
+    }
+
     private var rotatedPixelSize: CGSize {
         rotation % 2 == 0 ? pixelSize : CGSize(width: pixelSize.height, height: pixelSize.width)
     }

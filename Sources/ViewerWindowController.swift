@@ -30,6 +30,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var currentInfo: ImageInfo?
     /// The photo whose pixels (thumbnail or decoded) the canvas shows.
     private var canvasURL: URL?
+    private var canvasShowsFull = false
     /// While a key is held, photos are decoded only where the user stops.
     private var lastNavigation: CFTimeInterval = 0
     private var pendingDecode: DispatchWorkItem?
@@ -65,7 +66,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         buildUI()
         updateForScreen()
         thumbCache.countLimit = 600
-        pipeline.onDecoded = { [weak self] in self?.decoded($0, $1) }
+        pipeline.onDecoded = { [weak self] in self?.decoded($0, $1, $2) }
         watchMemoryPressure()
         NotificationCenter.default.addObserver(self, selector: #selector(screenParametersChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -103,7 +104,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         canvas.onKeyDown = { [weak self] in self?.handleKey($0) ?? false }
         canvas.onClick = { [weak self] inside in self?.canvasClicked(insideImage: inside) }
         canvas.onSwipe = { [weak self] dir in self?.step(dir) }
-        canvas.onViewChange = { [weak self] in self?.updateZoomLabel() }
+        canvas.onViewChange = { [weak self] in
+            self?.updateZoomLabel()
+            self?.updateTiers()
+        }
 
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.black.withAlphaComponent(0.8)
@@ -300,10 +304,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return
         }
 
-        let rotation = rotations[url] ?? 0
         if info.isAnimatable {
-            canvas.setImage(thumbCache.object(forKey: url as NSURL), pixelSize: info.pixelSize, rotation: rotation)
-            canvasURL = url
+            setCanvas(thumbCache.object(forKey: url as NSURL), of: url)
             let status = CGAnimateImageAtURLWithBlock(url as CFURL, nil) { [weak self] _, frame, stop in
                 guard let self, self.generation == gen, self.window?.isVisible == true else {
                     stop.pointee = true
@@ -322,8 +324,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         } else if let thumb = thumbCache.object(forKey: url as NSURL) {
             // Show the thumbnail while decoding; without one, keep the previous photo up until
             // the full image is ready.
-            canvas.setImage(thumb, pixelSize: info.pixelSize, rotation: rotation)
-            canvasURL = url
+            setCanvas(thumb, of: url)
         }
         loadAround(url, decode: true, after: isKeyRepeat)
     }
@@ -334,7 +335,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         let load = { [weak self] in
             guard let self else { return }
             if decode && self.pipeline.images[url] == nil {
-                self.pipeline.load(url, first: true)
+                self.pipeline.loadScreen(url, box: self.fitBox(for: url), first: true)
             } else {
                 self.preloadNeighbors()
             }
@@ -348,25 +349,75 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
     }
 
-    private func decoded(_ url: URL, _ image: CGImage?) {
+    private func decoded(_ url: URL, _ tier: ImagePipeline.Tier, _ image: CGImage?) {
         guard url == currentURL, currentInfo?.isAnimatable != true else { return }
-        if let image { show(image, of: url) } else { showFailure(url) }
-        preloadNeighbors()
-    }
-
-    private func show(_ image: CGImage, of url: URL) {
-        if canvasURL == url {
-            canvas.replaceContents(image)
-        } else {
-            canvas.setImage(image, pixelSize: currentInfo?.pixelSize ?? .zero, rotation: rotations[url] ?? 0)
-            canvasURL = url
+        switch tier {
+        case .screen:
+            if let image {
+                show(image, of: url)
+                updateTiers()
+            } else if canvasURL != url || !canvas.hasContents {
+                showFailure(url)
+            }
+            preloadNeighbors()
+        case .full:
+            updateTiers()
         }
     }
 
+    /// Shows the decoded photo, in place of its thumbnail if that is up.
+    private func show(_ image: CGImage, of url: URL) {
+        if canvasURL == url {
+            canvas.replaceContents(image)
+            canvasShowsFull = false
+        } else {
+            setCanvas(image, of: url)
+        }
+    }
+
+    private func setCanvas(_ image: CGImage?, of url: URL?) {
+        let info = url == currentURL ? currentInfo : nil
+        canvas.setImage(image, pixelSize: info?.pixelSize ?? .zero, rotation: url.flatMap { rotations[$0] } ?? 0)
+        canvasURL = url
+        canvasShowsFull = false
+    }
+
     private func showFailure(_ url: URL) {
-        canvas.setImage(nil, pixelSize: .zero, rotation: 0)
-        canvasURL = nil
+        setCanvas(nil, of: nil)
         showMessage("Can’t open “\(url.lastPathComponent)”.")
+    }
+
+    /// Where `url` goes on screen, in device pixels, with its rotation taken into account.
+    private func fitBox(for url: URL) -> CGSize {
+        let box = canvas.fitBox
+        return (rotations[url] ?? 0) % 2 == 0 ? box : CGSize(width: box.height, height: box.width)
+    }
+
+    /// Keeps the current photo sharp: a bigger screen image when the space for it grows, and the
+    /// full-resolution one only while zoomed in past the screen image.
+    private func updateTiers() {
+        guard let url = currentURL, canvasURL == url, let info = currentInfo, !info.isAnimatable,
+              let screen = pipeline.images[url] else { return }
+        let fullLong = min(max(info.pixelSize.width, info.pixelSize.height), CGFloat(ImageLoader.maxDecodedSide))
+        let screenLong = CGFloat(max(screen.width, screen.height))
+        let needed = ImageLoader.neededLongSide(info.pixelSize, box: fitBox(for: url))
+        if Int(screenLong) < needed - 1 {
+            pipeline.loadScreen(url, box: fitBox(for: url), minLongSide: needed - 1, first: true)
+        }
+        if screenLong < fullLong, canvas.zoom > screenLong / fullLong + 0.001 {
+            if let full = pipeline.full, full.url == url {
+                if !canvasShowsFull {
+                    canvas.replaceContents(full.image)
+                    canvasShowsFull = true
+                }
+            } else {
+                pipeline.loadFull(url)
+            }
+        } else if pipeline.full != nil || canvasShowsFull {
+            if canvasShowsFull { canvas.replaceContents(screen) }
+            canvasShowsFull = false
+            pipeline.dropFull()
+        }
     }
 
     private var neighborURLs: [URL] {
@@ -375,13 +426,18 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func preloadNeighbors() {
-        for url in neighborURLs { pipeline.load(url, first: false) }
+        for url in neighborURLs { pipeline.loadScreen(url, box: fitBox(for: url), first: false) }
     }
 
     private func watchMemoryPressure() {
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
         source.setEventHandler { [weak self, weak source] in
             guard let self, let source else { return }
+            if self.canvasShowsFull, let url = self.currentURL, let screen = self.pipeline.images[url] {
+                self.canvas.replaceContents(screen)
+                self.canvasShowsFull = false
+            }
+            self.pipeline.dropFull()
             self.pipeline.keep([self.currentURL].compactMap { $0 })
             if source.data.contains(.critical) { self.thumbCache.removeAllObjects() }
         }
@@ -403,9 +459,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                     guard let thumb else { return }
                     self.thumbCache.setObject(thumb, forKey: url as NSURL)
                     self.filmstrip.needsDisplay = true
-                    if url == self.currentURL, self.canvasURL != url, let info = self.currentInfo {
-                        self.canvas.setImage(thumb, pixelSize: info.pixelSize, rotation: self.rotations[url] ?? 0)
-                        self.canvasURL = url
+                    if url == self.currentURL, self.canvasURL != url, self.currentInfo != nil {
+                        self.setCanvas(thumb, of: url)
                     }
                 }
             }

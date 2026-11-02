@@ -477,6 +477,7 @@ tools/perf/run.sh app        # only the viewer scenarios
   | `open` | Launch → sharp photo, then footprint once the neighbours are preloaded |
   | `pace` | → every 0.7 s, 12 times |
   | `burst` | → at 30 Hz for 1 s, then 3 s to settle |
+  | `zoom` | Actual size must show the photo's own pixels; zooming back to fit must release them |
   | `gif` | CPU and memory while an animated GIF plays |
 
 - **Nothing shows on screen.** The window is fully transparent and click-through, and the process

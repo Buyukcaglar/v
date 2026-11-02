@@ -1,7 +1,7 @@
 // Drives the app's real ViewerWindowController, compiled from Sources/ with this file in place of
 // main.swift. The window is fully transparent and click-through and the app never activates, so
 // nothing appears on screen. Only non-private API is used, so it keeps building as the app changes.
-// Usage: harness open|pace|burst|gif <file>
+// Usage: harness open|pace|burst|zoom|gif <file>
 import AppKit
 
 setvbuf(stdout, nil, _IOLBF, 0)
@@ -136,6 +136,28 @@ DispatchQueue.main.async {
                 print(String(format: "1 s later (neighbours preloaded): footprint %.0f MB · peak %.0f MB · threads %d · photos held %@",
                              f.now, f.peak, threadCount(), cachedPhotos(controller)))
                 exit(0)
+            }
+        case "zoom":
+            // Actual size must show the photo's own pixels, and zooming back to fit must let them go.
+            let src = CGImageSourceCreateWithURL(target as CFURL, nil)!
+            let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as! [CFString: Any]
+            let w = (props[kCGImagePropertyPixelWidth] as! NSNumber).intValue, h = (props[kCGImagePropertyPixelHeight] as! NSNumber).intValue
+            let sideways = ((props[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1) >= 5
+            let width = sideways ? h : w
+            let fitted = widestImage(in: canvas.layer)
+            let atZoom = now()
+            controller.actualSize(nil)
+            waitUntil({ widestImage(in: canvas.layer) >= width || now() - atZoom > 3000 }) {
+                let f = footprint()
+                print(String(format: "100 %%: contents %d px wide, photo %d px wide (fitted %d px) · %.0f ms · footprint %.0f MB",
+                             widestImage(in: canvas.layer), width, fitted, now() - atZoom, f.now))
+                controller.zoomToFit(nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    let f = footprint()
+                    print(String(format: "back to fit: contents %d px wide · footprint %.0f MB · peak %.0f MB",
+                                 widestImage(in: canvas.layer), f.now, f.peak))
+                    exit(0)
+                }
             }
         case "pace":
             // → once every 0.7 s: slower than a decode, like reading or the slideshow.
