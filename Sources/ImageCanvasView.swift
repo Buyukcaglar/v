@@ -290,6 +290,12 @@ final class ImageCanvasView: NSView {
         }
     }
 
+    /// The view's menu opens only over the photo itself.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard hasContents, imageLayer.frame.contains(convert(event.locationInWindow, from: nil)) else { return nil }
+        return super.menu(for: event)
+    }
+
     override func scrollWheel(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         // Trackpads and the Magic Mouse send gesture phases. A precise event without any is

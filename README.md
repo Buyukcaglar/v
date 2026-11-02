@@ -64,7 +64,8 @@ restarts `lsd`.
 | ⌘⌫ | Move to Trash |
 | Esc, ⌘W | Stop slideshow / close |
 
-Clicking the dimmed background also closes the viewer.
+Clicking the dimmed background also closes the viewer. Right-clicking the photo offers Copy Image and
+Show in Finder.
 
 ## Performance tools
 

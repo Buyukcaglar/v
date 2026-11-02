@@ -127,6 +127,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             self?.updateZoomLabel()
             self?.updateTiers()
         }
+        let imageMenu = NSMenu()
+        imageMenu.addItem(withTitle: "Copy Image", action: #selector(copy(_:)), keyEquivalent: "").target = self
+        imageMenu.addItem(withTitle: "Show in Finder", action: #selector(revealInFinder(_:)), keyEquivalent: "").target = self
+        canvas.menu = imageMenu
 
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.black.withAlphaComponent(0.8)
@@ -179,6 +183,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             zoomLabel,
             spacer(),
             toolButton("play.fill", "Slideshow (⇧⌘F)", #selector(toggleSlideshow(_:))),
+            toolButton("doc.on.doc", "Copy Image (⌘C)", #selector(copy(_:))),
             toolButton("folder", "Show in Finder (⇧⌘R)", #selector(revealInFinder(_:))),
             toolButton("trash", "Move to Trash (⌘⌫)", #selector(moveToTrash(_:))),
         ])
