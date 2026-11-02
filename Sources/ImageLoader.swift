@@ -60,6 +60,31 @@ enum ImageLoader {
         return thumbnail(src, props, maxPixel: min(props.longSide / factor, maxDecodedSide))
     }
 
+    /// ImageIO's first decode in a process pays for loading and setting up its decoders,
+    /// ~60 ms for HEIF. Decoding a 16 px HEIC while the app starts moves that off the path to
+    /// the first photo; it warms the shared JPEG and PNG set-up too.
+    static func warmUp() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let data = Data(base64Encoded: tinyHEIC, options: .ignoreUnknownCharacters),
+                  let src = CGImageSourceCreateWithData(data as CFData, nil) else { return }
+            _ = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 16,
+                kCGImageSourceShouldCacheImmediately: true,
+            ] as CFDictionary)
+        }
+    }
+
+    private static let tinyHEIC = """
+        AAAAJGZ0eXBoZWljAAAAAG1pZjFNaVBybWlhZk1pSEJoZWljAAABhm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAHBpY3QAAAAA
+        AAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAADnBpdG0AAAAAAAEAAAAjaWluZgAAAAAA
+        AQAAABVpbmZlAgAAAAABAABodmMxAAAAAOZpcHJwAAAAxWlwY28AAAATY29scm5jbHgAAgACAAaAAAAADGNsbGkAywBAAAAA
+        FGlzcGUAAAAAAAAAEAAAABAAAAAJaXJvdAAAAAAQcGl4aQAAAAADCAgIAAAAcWh2Y0MBA3AAAACwAAAAAAAe8AD8/fj4AAAL
+        A6AAAQAXQAEMAf//A3AAAAMAsAAAAwAAAwAecCShAAEAI0IBAQNwAAADALAAAAMAAAMAHqAUIEHAkwziHuRZVNwICBgCogAB
+        AAlEAcBhcshAUyQAAAAZaXBtYQAAAAAAAAABAAEGgQIDBYaEAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAAboAAAArAAAAAW1k
+        YXQAAAAAAAAAOwAAACcoAa+ixkft2//+JRWypaJ+oHto45lf0CI62Cx9i6Hm1EaQ+PQI/mw=
+        """
+
     /// Long side, in pixels, of `size` fitted into `box`, never enlarged.
     static func neededLongSide(_ size: CGSize, box: CGSize) -> Int {
         guard size.width > 0, size.height > 0 else { return 0 }

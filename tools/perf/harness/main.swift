@@ -6,6 +6,9 @@
 import AppKit
 
 setvbuf(stdout, nil, _IOLBF, 0)
+let scenario = CommandLine.arguments[1]
+// As main.swift does before the run loop.
+if scenario == "launch" { ImageLoader.warmUp() }
 
 func footprint() -> (now: Double, peak: Double) {
     var info = task_vm_info_data_t()
@@ -87,7 +90,6 @@ func waitUntil(_ condition: @escaping () -> Bool, then: @escaping () -> Void) {
     }
 }
 
-let scenario = CommandLine.arguments[1]
 let target = URL(fileURLWithPath: CommandLine.arguments[2])
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)

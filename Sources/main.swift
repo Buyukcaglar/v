@@ -10,6 +10,8 @@ if CommandLine.arguments.contains("--make-default") {
     exit(failures.isEmpty ? 0 : 1)
 }
 
+ImageLoader.warmUp()
+
 MainActor.assumeIsolated {
     let delegate = AppDelegate()
     NSApplication.shared.delegate = delegate
