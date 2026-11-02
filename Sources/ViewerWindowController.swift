@@ -26,8 +26,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var index = 0
     private var rotations: [URL: Int] = [:]
     private var generation = 0
-    private let pipeline = ImagePipeline()
-    private var currentInfo: ImageInfo?
+    private let pipeline: ImagePipeline
+    private var infos: [URL: ImageInfo] = [:]
+    private let infoQueue = DispatchQueue(label: "viewer.info", qos: .userInitiated)
+    private let listQueue = DispatchQueue(label: "viewer.list", qos: .userInitiated)
+    private var listing = 0
     /// The photo whose pixels (thumbnail or decoded) the canvas shows.
     private var canvasURL: URL?
     private var canvasShowsFull = false
@@ -50,8 +53,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private static let chromeHeight: CGFloat = 118
     private static let topBarHeight: CGFloat = 44
 
-    init() {
-        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main!
+    /// Starts decoding a single opened photo before building the window, so the two overlap.
+    convenience init(opening urls: [URL]) {
+        let pipeline = ImagePipeline()
+        if urls.count == 1, let url = urls.first, !ImageLoader.isDirectory(url) {
+            pipeline.keep([url])
+            pipeline.loadScreen(url, box: Self.fitBox(on: Self.screenForNewWindow), first: true)
+        }
+        self.init(pipeline: pipeline)
+    }
+
+    init(pipeline: ImagePipeline = ImagePipeline()) {
+        self.pipeline = pipeline
+        let screen = Self.screenForNewWindow
         let window = ViewerWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.setFrame(screen.frame, display: false)
         window.isOpaque = false
@@ -213,10 +227,33 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         return v
     }
 
+    /// The screen with the pointer, where the viewer opens.
+    private static var screenForNewWindow: NSScreen {
+        NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main!
+    }
+
     private var screenInsets: NSEdgeInsets {
         guard let screen = window?.screen ?? NSScreen.main else { return NSEdgeInsets() }
+        return Self.insets(of: screen)
+    }
+
+    private static func insets(of screen: NSScreen) -> NSEdgeInsets {
         let f = screen.frame, v = screen.visibleFrame
         return NSEdgeInsets(top: f.maxY - v.maxY, left: v.minX - f.minX, bottom: v.minY - f.minY, right: f.maxX - v.maxX)
+    }
+
+    /// Space the photo leaves free for the chrome, the menu bar and the Dock.
+    private static func canvasInsets(_ i: NSEdgeInsets, slideshow: Bool) -> NSEdgeInsets {
+        let chromeSpace: CGFloat = slideshow ? 0 : chromeHeight + 24
+        let topSpace: CGFloat = slideshow ? 0 : topBarHeight
+        return NSEdgeInsets(top: i.top + topSpace, left: i.left + 10, bottom: i.bottom + chromeSpace, right: i.right + 10)
+    }
+
+    /// The canvas's `fitBox` on `screen`, before there is a canvas.
+    private static func fitBox(on screen: NSScreen) -> CGSize {
+        let i = canvasInsets(insets(of: screen), slideshow: false), scale = screen.backingScaleFactor
+        return CGSize(width: max(screen.frame.width - i.left - i.right, 1) * scale,
+                      height: max(screen.frame.height - i.top - i.bottom, 1) * scale)
     }
 
     private func updateForScreen() {
@@ -231,26 +268,56 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func updateCanvasInsets() {
-        let i = screenInsets
-        let chromeSpace: CGFloat = isSlideshow ? 0 : Self.chromeHeight + 24
-        let topSpace: CGFloat = isSlideshow ? 0 : Self.topBarHeight
-        canvas.reservedInsets = NSEdgeInsets(top: i.top + topSpace, left: i.left + 10,
-                                             bottom: i.bottom + chromeSpace, right: i.right + 10)
+        canvas.reservedInsets = Self.canvasInsets(screenInsets, slideshow: isSlideshow)
     }
 
     @objc private func screenParametersChanged(_ note: Notification) { updateForScreen() }
 
     // MARK: Showing files
 
+    /// Shows a single photo at once and lists its folder in the background; folders and
+    /// several items appear once they are listed.
     func show(urls: [URL]) {
-        let (list, start) = ImageLoader.browseList(for: urls)
+        listing += 1
+        let token = listing
+        if urls.count == 1, let file = urls.first, !ImageLoader.isDirectory(file) {
+            open([file], at: 0)
+            listQueue.async { [weak self] in
+                let (list, start) = ImageLoader.siblings(of: file)
+                DispatchQueue.main.async {
+                    guard let self, self.listing == token, self.files == [file], list.count > 1 else { return }
+                    self.folderListed(list, at: start)
+                }
+            }
+        } else {
+            listQueue.async { [weak self] in
+                let (list, start) = ImageLoader.browseList(for: urls)
+                DispatchQueue.main.async {
+                    guard let self, self.listing == token else { return }
+                    self.open(list, at: start)
+                }
+            }
+        }
+    }
+
+    /// Puts the photo already on screen in its place among its folder's photos.
+    private func folderListed(_ list: [URL], at start: Int) {
+        files = list
+        index = start
+        filmstrip.count = list.count
+        filmstrip.current = start
+        updateInfoLabel(currentInfo)
+        pipeline.keep([list[start]] + neighborURLs)
+        if pipeline.images[list[start]] != nil || currentInfo?.isAnimatable == true { preloadNeighbors() }
+    }
+
+    private func open(_ list: [URL], at start: Int) {
         guard !list.isEmpty else {
             NSSound.beep()
             if !(window?.isVisible ?? false) { closeViewer(nil) }
             return
         }
         files = list
-        pipeline.keep([])
         thumbQueue.cancelAllOperations()
         thumbsLoading.removeAll()
         filmstrip.count = files.count
@@ -278,6 +345,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var fadingViews: [NSView] { [backdrop, chrome, infoLabel, closeButton] }
 
     private var currentURL: URL? { files.indices.contains(index) ? files[index] : nil }
+    private var currentInfo: ImageInfo? { currentURL.flatMap { infos[$0] } }
 
     private func display() {
         guard let url = currentURL else { return }
@@ -286,18 +354,34 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         thumbQueue.cancelAllOperations()
         thumbsLoading.removeAll()
 
-        let info = ImageLoader.info(url)
-        currentInfo = info
         window?.title = url.lastPathComponent
         filmstrip.current = index
         messageLabel.isHidden = true
-        updateInfoLabel(info)
         pipeline.keep([url] + neighborURLs)
+        infos = infos.filter { $0.key == url || neighborURLs.contains($0.key) }
         pendingDecode?.cancel()
         let now = CACurrentMediaTime()
         let isKeyRepeat = now - lastNavigation < 0.12
         lastNavigation = now
 
+        if let info = infos[url] {
+            display(url, info, isKeyRepeat: isKeyRepeat)
+            return
+        }
+        updateInfoLabel(nil)
+        infoQueue.async { [weak self] in
+            let info = ImageLoader.info(url)
+            DispatchQueue.main.async {
+                guard let self, self.generation == gen else { return }
+                if let info { self.infos[url] = info }
+                self.display(url, info, isKeyRepeat: isKeyRepeat)
+            }
+        }
+    }
+
+    private func display(_ url: URL, _ info: ImageInfo?, isKeyRepeat: Bool) {
+        let gen = generation
+        updateInfoLabel(info)
         guard let info else {
             showFailure(url)
             loadAround(url, decode: false, after: isKeyRepeat)
@@ -560,7 +644,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         guard let url = currentURL else { return }
         rotations[url] = (((rotations[url] ?? 0) + delta) % 4 + 4) % 4
         canvas.rotate(by: delta)
-        updateInfoLabel(ImageLoader.info(url))
+        updateInfoLabel(currentInfo)
     }
 
     @objc func zoomIn(_ sender: Any?) { canvas.zoomIn() }

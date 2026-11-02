@@ -475,6 +475,7 @@ tools/perf/run.sh app        # only the viewer scenarios
   | Scenario | What it does |
   |---|---|
   | `open` | Launch → sharp photo, then footprint once the neighbours are preloaded |
+  | `launch` | As `open`, but built the way `AppDelegate` does it, decoding while the window is built |
   | `pace` | → every 0.7 s, 12 times |
   | `burst` | → at 30 Hz for 1 s, then 3 s to settle |
   | `zoom` | Actual size must show the photo's own pixels; zooming back to fit must release them |

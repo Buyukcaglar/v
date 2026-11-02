@@ -15,20 +15,16 @@ enum ImageLoader {
     static let maxDecodedSide = 12_000
 
     static func info(_ url: URL) -> ImageInfo? {
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        let count = CGImageSourceGetCount(src)
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let type = CGImageSourceGetType(src).flatMap({ UTType($0 as String) }) else { return nil }
+        // Counting frames scans the whole file, so only formats that can animate pay for it.
+        let animatable = animatableTypes.contains { type.conforms(to: $0) }
+        let count = animatable ? CGImageSourceGetCount(src) : 1
         guard count > 0 else { return nil }
-        let idx = CGImageSourceGetPrimaryImageIndex(src)
-        let props = CGImageSourceCopyPropertiesAtIndex(src, idx, nil) as? [CFString: Any] ?? [:]
-        var w = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 0
-        var h = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 0
-        let orientation = (props[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
-        if orientation >= 5 { swap(&w, &h) }
+        let props = Props(src)
+        guard props.width > 0, props.height > 0 else { return nil }
         let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
-        return ImageInfo(pixelSize: CGSize(width: w, height: h),
-                         frameCount: count,
-                         fileSize: fileSize,
-                         isAnimatable: count > 1 && isAnimatableType(url))
+        return ImageInfo(pixelSize: props.orientedSize, frameCount: count, fileSize: fileSize, isAnimatable: count > 1)
     }
 
     /// Full-resolution image with EXIF orientation applied.
@@ -122,42 +118,50 @@ enum ImageLoader {
         return CGImageSourceCreateThumbnailAtIndex(src, CGImageSourceGetPrimaryImageIndex(src), opts as CFDictionary)
     }
 
-    static func isImage(_ url: URL) -> Bool {
-        guard let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType else { return false }
-        return type.conforms(to: .image)
-    }
+    /// Every image type ImageIO can decode on this Mac (JPEG, PNG, HEIC, WebP, camera RAW, …).
+    static let decodableTypes: [UTType] = ((CGImageSourceCopyTypeIdentifiers() as? [String]) ?? [])
+        .compactMap(UTType.init)
+        .filter { $0.conforms(to: .image) }
+    private static let decodableIDs = Set(decodableTypes.map(\.identifier))
 
-    private static func isAnimatableType(_ url: URL) -> Bool {
-        guard let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType else { return false }
-        let animatable: [UTType] = [.gif, .png, .webP, UTType("public.heics")].compactMap { $0 }
-        return animatable.contains { type.conforms(to: $0) }
-    }
+    private static let animatableTypes: [UTType] = [.gif, .png, .webP, UTType("public.heics")].compactMap { $0 }
 
     /// Images in a folder, in Finder order.
     static func images(inDirectory dir: URL) -> [URL] {
-        let keys: [URLResourceKey] = [.contentTypeKey, .isRegularFileKey]
+        let keys: Set<URLResourceKey> = [.contentTypeKey, .isRegularFileKey, .fileSizeKey]
         guard let items = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return [] }
-        return items
-            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true && isImage($0) }
-            .map { $0.standardizedFileURL }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            at: dir, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]) else { return [] }
+        return autoreleasepool {
+            var named: [(name: String, url: URL)] = []
+            named.reserveCapacity(items.count)
+            for url in items {
+                guard let values = try? url.resourceValues(forKeys: keys), values.isRegularFile == true,
+                      let type = values.contentType?.identifier, decodableIDs.contains(type) else { continue }
+                named.append((url.lastPathComponent, url))
+            }
+            named.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return named.map(\.url)
+        }
     }
 
     static func isDirectory(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
+    /// The photos in `file`'s folder with `file` itself in its place, or just `file` when the
+    /// folder doesn't list it.
+    static func siblings(of file: URL) -> (files: [URL], start: Int) {
+        var siblings = images(inDirectory: file.deletingLastPathComponent())
+        let name = file.lastPathComponent
+        guard let start = siblings.firstIndex(where: { $0.lastPathComponent == name }) else { return ([file], 0) }
+        siblings[start] = file
+        return (siblings, start)
+    }
+
     /// Resolves what the viewer should browse for a set of opened items, and where to start.
     static func browseList(for urls: [URL]) -> (files: [URL], start: Int) {
-        let urls = urls.map { $0.standardizedFileURL }
         if urls.count == 1, let only = urls.first {
-            if isDirectory(only) {
-                return (images(inDirectory: only), 0)
-            }
-            var siblings = images(inDirectory: only.deletingLastPathComponent())
-            if !siblings.contains(only) { siblings = [only] }
-            return (siblings, siblings.firstIndex(of: only) ?? 0)
+            return isDirectory(only) ? (images(inDirectory: only), 0) : siblings(of: only)
         }
         let files = urls.flatMap { isDirectory($0) ? images(inDirectory: $0) : [$0] }
         return (files, 0)

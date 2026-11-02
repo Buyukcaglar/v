@@ -43,6 +43,8 @@ if [[ $WHAT == (app|all) ]]; then
   run open photos/IMG_0006.jpg
   run open heic/IMG_0001.heic
   run open many/IMG_5000.jpg
+  run launch photos/IMG_0001.jpg
+  run launch heic/IMG_0001.heic
   run pace photos/IMG_0001.jpg
   run burst photos/IMG_0001.jpg
   run burst heic/IMG_0001.heic

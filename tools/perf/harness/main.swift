@@ -1,7 +1,8 @@
 // Drives the app's real ViewerWindowController, compiled from Sources/ with this file in place of
 // main.swift. The window is fully transparent and click-through and the app never activates, so
 // nothing appears on screen. Only non-private API is used, so it keeps building as the app changes.
-// Usage: harness open|pace|burst|zoom|gif <file>
+// Usage: harness open|launch|pace|burst|zoom|gif <file>
+// `launch` builds the viewer as AppDelegate does, decoding while the window is built.
 import AppKit
 
 setvbuf(stdout, nil, _IOLBF, 0)
@@ -96,7 +97,7 @@ var viewer: ViewerWindowController?
 
 DispatchQueue.main.async {
     let atRunLoop = now()
-    let controller = ViewerWindowController()
+    let controller = scenario == "launch" ? ViewerWindowController(opening: [target]) : ViewerWindowController()
     viewer = controller
     let window = controller.window!
     window.alphaValue = 0
@@ -130,11 +131,13 @@ DispatchQueue.main.async {
         print(String(format: "first pixels %.0f ms after show · sharp photo %.0f ms after show (%.0f ms after launch) · footprint %.0f MB",
                      (firstPixels ?? now()) - atShow, now() - atShow, now(), f.now))
         switch scenario {
-        case "open":
+        case "open", "launch":
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 let f = footprint()
                 print(String(format: "1 s later (neighbours preloaded): footprint %.0f MB · peak %.0f MB · threads %d · photos held %@",
                              f.now, f.peak, threadCount(), cachedPhotos(controller)))
+                let label = views(of: NSTextField.self, in: window.contentView!).first { $0.stringValue.contains(" of ") }
+                print("label: \(label?.stringValue.replacingOccurrences(of: "     ", with: " · ") ?? "none")")
                 exit(0)
             }
         case "zoom":

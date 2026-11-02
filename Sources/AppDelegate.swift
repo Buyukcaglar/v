@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func open(_ urls: [URL]) {
         openedSomething = true
-        let viewer = self.viewer ?? ViewerWindowController()
+        let viewer = self.viewer ?? ViewerWindowController(opening: urls)
         if self.viewer == nil {
             viewer.onClose = { [weak self] in self?.viewer = nil }
             self.viewer = viewer
