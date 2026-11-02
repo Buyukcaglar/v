@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+<clipPath id="c0">
+<rect x="242.0" y="742.0" width="84" height="84" rx="16"/>
+</clipPath>
+<linearGradient id="t0" gradientUnits="userSpaceOnUse" x1="0" y1="742.0" x2="0" y2="826.0">
+<stop offset="0" stop-color="#7FE3C9"/>
+<stop offset="1" stop-color="#2FB38A"/>
+</linearGradient>
+<clipPath id="c1">
+<rect x="356.0" y="742.0" width="84" height="84" rx="16"/>
+</clipPath>
+<linearGradient id="t1" gradientUnits="userSpaceOnUse" x1="0" y1="742.0" x2="0" y2="826.0">
+<stop offset="0" stop-color="#FFD27A"/>
+<stop offset="1" stop-color="#FF8F6B"/>
+</linearGradient>
+<clipPath id="c3">
+<rect x="584.0" y="742.0" width="84" height="84" rx="16"/>
+</clipPath>
+<linearGradient id="t3" gradientUnits="userSpaceOnUse" x1="0" y1="742.0" x2="0" y2="826.0">
+<stop offset="0" stop-color="#8AD4FF"/>
+<stop offset="1" stop-color="#3E86F0"/>
+</linearGradient>
+<clipPath id="c4">
+<rect x="698.0" y="742.0" width="84" height="84" rx="16"/>
+</clipPath>
+<linearGradient id="t4" gradientUnits="userSpaceOnUse" x1="0" y1="742.0" x2="0" y2="826.0">
+<stop offset="0" stop-color="#D2A8FF"/>
+<stop offset="1" stop-color="#8A5CF0"/>
+</linearGradient>
+</defs>
+<g clip-path="url(#c0)" opacity="0.78">
+<rect x="242.0" y="742.0" width="84" height="84" fill="url(#t0)"/>
+<path d="M242.0,794.1 Q271.4,772.2 326.0,800.8 L326.0,826.0 L242.0,826.0 Z" fill="#145C4E"/>
+</g>
+<g clip-path="url(#c1)" opacity="0.78">
+<rect x="356.0" y="742.0" width="84" height="84" fill="url(#t1)"/>
+<path d="M356.0,802.5 Q410.6,778.1 440.0,797.4 L440.0,826.0 L356.0,826.0 Z" fill="#7A2F52"/>
+</g>
+<g clip-path="url(#c3)" opacity="0.78">
+<rect x="584.0" y="742.0" width="84" height="84" fill="url(#t3)"/>
+<path d="M584.0,797.4 Q626.0,794.1 668.0,792.4 L668.0,826.0 L584.0,826.0 Z" fill="#1C3A8A"/>
+</g>
+<g clip-path="url(#c4)" opacity="0.78">
+<rect x="698.0" y="742.0" width="84" height="84" fill="url(#t4)"/>
+<path d="M698.0,790.7 Q733.3,789.0 782.0,785.7 L782.0,826.0 L698.0,826.0 Z" fill="#3A1F7A"/>
+</g>
+</svg>

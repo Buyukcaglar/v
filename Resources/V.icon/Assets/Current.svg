@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+<clipPath id="cur">
+<rect x="460.0" y="732.0" width="104" height="104" rx="18"/>
+</clipPath>
+<linearGradient id="msky" gradientUnits="userSpaceOnUse" x1="0" y1="184" x2="0" y2="664">
+<stop offset="0" stop-color="#2341D6"/>
+<stop offset="0.3" stop-color="#5B4DF5"/>
+<stop offset="0.56" stop-color="#C058E0"/>
+<stop offset="0.76" stop-color="#FF7D95"/>
+<stop offset="1" stop-color="#FFC077"/>
+</linearGradient>
+<radialGradient id="mhalo" gradientUnits="userSpaceOnUse" cx="512" cy="568" r="270">
+<stop offset="0" stop-color="#FFE3A6" stop-opacity="0.85"/>
+<stop offset="0.45" stop-color="#FFB98A" stop-opacity="0.35"/>
+<stop offset="1" stop-color="#FF9A8A" stop-opacity="0"/>
+</radialGradient>
+<radialGradient id="msun" gradientUnits="userSpaceOnUse" cx="512" cy="544" r="106">
+<stop offset="0" stop-color="#FFFBEA"/>
+<stop offset="0.55" stop-color="#FFE6A3"/>
+<stop offset="1" stop-color="#FFBC66"/>
+</radialGradient>
+<clipPath id="mnear">
+<path d="M152,548 C206,472 258,396 300,338 Q314,318 330,338 L512,624 L556,704 L152,704 Z"/>
+</clipPath>
+<clipPath id="mfar">
+<path d="M452,704 L512,624 L700,392 Q716,372 734,390 C782,432 830,462 872,474 L872,704 Z"/>
+</clipPath>
+<linearGradient id="mnearfill" gradientUnits="userSpaceOnUse" x1="0" y1="340" x2="0" y2="664">
+<stop offset="0" stop-color="#241B63"/>
+<stop offset="1" stop-color="#100C34"/>
+</linearGradient>
+<linearGradient id="mfarfill" gradientUnits="userSpaceOnUse" x1="0" y1="370" x2="0" y2="664">
+<stop offset="0" stop-color="#46309A"/>
+<stop offset="1" stop-color="#241A64"/>
+</linearGradient>
+<radialGradient id="mrim" gradientUnits="userSpaceOnUse" cx="512" cy="568" r="400">
+<stop offset="0" stop-color="#FFE0B8" stop-opacity="1"/>
+<stop offset="0.45" stop-color="#FF9FB0" stop-opacity="0.6"/>
+<stop offset="1" stop-color="#C77DFF" stop-opacity="0"/>
+</radialGradient>
+</defs>
+<g clip-path="url(#cur)">
+<g transform="translate(460.0 732.0) scale(0.21667) translate(-272.0 -184)">
+<rect x="152" y="184" width="720" height="480" fill="url(#msky)"/>
+<circle cx="512" cy="568" r="270" fill="url(#mhalo)"/>
+<circle cx="512" cy="568" r="82" fill="url(#msun)"/>
+<path d="M452,704 L512,624 L700,392 Q716,372 734,390 C782,432 830,462 872,474 L872,704 Z" fill="url(#mfarfill)"/>
+<path d="M152,548 C206,472 258,396 300,338 Q314,318 330,338 L512,624 L556,704 L152,704 Z" fill="url(#mnearfill)"/>
+</g>
+</g>
+<rect x="460.0" y="732.0" width="104" height="104" rx="18" fill="none" stroke="#FFFFFF" stroke-width="7"/>
+</svg>

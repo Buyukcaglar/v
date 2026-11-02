@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+<clipPath id="card">
+<rect x="152" y="184" width="720" height="480" rx="40"/>
+</clipPath>
+<radialGradient id="sun" gradientUnits="userSpaceOnUse" cx="512" cy="544" r="106">
+<stop offset="0" stop-color="#FFFBEA"/>
+<stop offset="0.55" stop-color="#FFE6A3"/>
+<stop offset="1" stop-color="#FFBC66"/>
+</radialGradient>
+</defs>
+<g clip-path="url(#card)">
+<circle cx="512" cy="568" r="82" fill="url(#sun)"/>
+</g>
+</svg>

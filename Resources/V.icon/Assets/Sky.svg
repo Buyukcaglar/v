@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+<clipPath id="card">
+<rect x="152" y="184" width="720" height="480" rx="40"/>
+</clipPath>
+<linearGradient id="sky" gradientUnits="userSpaceOnUse" x1="0" y1="184" x2="0" y2="664">
+<stop offset="0" stop-color="#2341D6"/>
+<stop offset="0.3" stop-color="#5B4DF5"/>
+<stop offset="0.56" stop-color="#C058E0"/>
+<stop offset="0.76" stop-color="#FF7D95"/>
+<stop offset="1" stop-color="#FFC077"/>
+</linearGradient>
+<radialGradient id="halo" gradientUnits="userSpaceOnUse" cx="512" cy="568" r="270">
+<stop offset="0" stop-color="#FFE3A6" stop-opacity="0.85"/>
+<stop offset="0.45" stop-color="#FFB98A" stop-opacity="0.35"/>
+<stop offset="1" stop-color="#FF9A8A" stop-opacity="0"/>
+</radialGradient>
+</defs>
+<g clip-path="url(#card)">
+<rect x="152" y="184" width="720" height="480" fill="url(#sky)"/>
+<circle cx="512" cy="568" r="270" fill="url(#halo)"/>
+</g>
+</svg>

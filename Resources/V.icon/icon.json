@@ -1,26 +1,66 @@
 {
   "fill": {
-    "solid": "srgb:0.16471,0.17647,0.19216,1.00000"
+    "linear-gradient": [
+      "srgb:0.16863,0.17647,0.22353,1.00000",
+      "srgb:0.05098,0.05490,0.07843,1.00000"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0.5,
+        "y": 0
+      },
+      "stop": {
+        "x": 0.5,
+        "y": 1
+      }
+    }
   },
   "groups": [
     {
+      "name": "Photo",
       "layers": [
         {
-          "glass": false,
-          "image-name": "V.png",
-          "name": "V",
-          "position": {
-            "scale": 0.62,
-            "translation-in-points": [
-              0,
-              0
-            ]
-          }
+          "name": "Hills",
+          "image-name": "Hills.svg",
+          "glass": false
+        },
+        {
+          "name": "Sun",
+          "image-name": "Sun.svg",
+          "glass": false
+        },
+        {
+          "name": "Sky",
+          "image-name": "Sky.svg",
+          "glass": false
+        }
+      ],
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.6
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "name": "Filmstrip",
+      "layers": [
+        {
+          "name": "Current",
+          "image-name": "Current.svg",
+          "glass": false
+        },
+        {
+          "name": "Thumbnails",
+          "image-name": "Filmstrip.svg",
+          "glass": false
         }
       ],
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.35
+        "opacity": 0.5
       },
       "translucency": {
         "enabled": false,

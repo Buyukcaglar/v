@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+<clipPath id="card">
+<rect x="152" y="184" width="720" height="480" rx="40"/>
+</clipPath>
+<clipPath id="near">
+<path d="M152,548 C206,472 258,396 300,338 Q314,318 330,338 L512,624 L556,704 L152,704 Z"/>
+</clipPath>
+<clipPath id="far">
+<path d="M452,704 L512,624 L700,392 Q716,372 734,390 C782,432 830,462 872,474 L872,704 Z"/>
+</clipPath>
+<linearGradient id="nearfill" gradientUnits="userSpaceOnUse" x1="0" y1="340" x2="0" y2="664">
+<stop offset="0" stop-color="#241B63"/>
+<stop offset="1" stop-color="#100C34"/>
+</linearGradient>
+<linearGradient id="farfill" gradientUnits="userSpaceOnUse" x1="0" y1="370" x2="0" y2="664">
+<stop offset="0" stop-color="#46309A"/>
+<stop offset="1" stop-color="#241A64"/>
+</linearGradient>
+<radialGradient id="rim" gradientUnits="userSpaceOnUse" cx="512" cy="568" r="400">
+<stop offset="0" stop-color="#FFE0B8" stop-opacity="1"/>
+<stop offset="0.45" stop-color="#FF9FB0" stop-opacity="0.6"/>
+<stop offset="1" stop-color="#C77DFF" stop-opacity="0"/>
+</radialGradient>
+</defs>
+<g clip-path="url(#card)">
+<path d="M452,704 L512,624 L700,392 Q716,372 734,390 C782,432 830,462 872,474 L872,704 Z" fill="url(#farfill)"/>
+<g clip-path="url(#far)">
+<path d="M512,624 L700,392 Q716,372 734,390 C782,432 830,462 872,474" fill="none" stroke="url(#rim)" stroke-width="14"/>
+</g>
+<path d="M152,548 C206,472 258,396 300,338 Q314,318 330,338 L512,624 L556,704 L152,704 Z" fill="url(#nearfill)"/>
+<g clip-path="url(#near)">
+<path d="M152,548 C206,472 258,396 300,338 Q314,318 330,338 L512,624" fill="none" stroke="url(#rim)" stroke-width="14"/>
+</g>
+</g>
+</svg>
