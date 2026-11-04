@@ -299,11 +299,14 @@ final class ImageCanvasView: NSView {
         onViewChange?()
     }
 
+    /// The bars and their buttons lie over the canvas, in the space kept free for them, so the
+    /// crosshair and the hand stay out of it and the arrow shows over the buttons.
     override func resetCursorRects() {
+        let photo = imageLayer.frame.intersection(availRect)
         if isMarking && !spaceHeld {
-            if hasContents { addCursorRect(imageLayer.frame.intersection(availRect), cursor: .crosshair) }
+            if hasContents { addCursorRect(photo, cursor: .crosshair) }
         } else if canPan {
-            addCursorRect(imageLayer.frame.intersection(bounds), cursor: .openHand)
+            addCursorRect(photo, cursor: .openHand)
         }
     }
 
