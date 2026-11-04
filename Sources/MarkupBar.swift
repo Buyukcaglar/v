@@ -18,13 +18,13 @@ final class MarkupBar: NSView {
         width = MarkWidth(rawValue: defaults.integer(forKey: Self.widthKey)) ?? .medium
         super.init(frame: .zero)
         swatches = MarkColor.palette.map { c in
-            Pick(size: NSSize(width: 26, height: 26), tip: c.name, action: { [unowned self] in
+            Pick(size: NSSize(width: 26, height: 32), tip: c.name, action: { [unowned self] in
                 self.color = c
                 self.picked()
             }, draw: { pick, rect in Self.drawSwatch(c, in: rect, selected: pick.isSelected) })
         }
         widths = MarkWidth.allCases.map { w in
-            Pick(size: NSSize(width: 36, height: 26), tip: w.name, action: { [unowned self] in
+            Pick(size: NSSize(width: 36, height: 32), tip: w.name, action: { [unowned self] in
                 self.width = w
                 self.picked()
             }, draw: { pick, rect in
@@ -64,14 +64,17 @@ final class MarkupBar: NSView {
         return v
     }
 
+    /// A dot in the middle of `rect`, which is taller than it so that it is easy to click.
     private static func drawSwatch(_ color: MarkColor, in rect: NSRect, selected: Bool) {
+        let side = min(rect.width, rect.height)
+        let square = NSRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)
         if selected {
-            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2))
+            let ring = NSBezierPath(ovalIn: square.insetBy(dx: 2, dy: 2))
             ring.lineWidth = 2
             NSColor.white.setStroke()
             ring.stroke()
         }
-        let dot = NSBezierPath(ovalIn: rect.insetBy(dx: 5.5, dy: 5.5))
+        let dot = NSBezierPath(ovalIn: square.insetBy(dx: 5.5, dy: 5.5))
         color.nsColor.setFill()
         dot.fill()
         // An edge keeps the dark colours visible on the dimmed desktop.
@@ -84,7 +87,7 @@ final class MarkupBar: NSView {
     private static func drawWidth(_ width: MarkWidth, in rect: NSRect, selected: Bool, scale: CGFloat) {
         if selected {
             NSColor(white: 1, alpha: 0.22).setFill()
-            NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5).fill()
+            NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 4), xRadius: 5, yRadius: 5).fill()
         }
         let thickness = CGFloat(width.rawValue) / scale
         let y = ((rect.midY - thickness / 2) * scale).rounded() / scale

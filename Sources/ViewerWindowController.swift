@@ -6,6 +6,12 @@ final class ViewerWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
+/// A borderless button laid out by its frame. Symbols would otherwise stretch the frame by
+/// their own outlines, so that neighbours overlap and steal each other's clicks.
+private final class ToolButton: NSButton {
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
+}
+
 /// A Picasa Photo Viewer style overlay: the desktop is dimmed, the photo floats in the
 /// middle, and a filmstrip with the tools sits at the bottom.
 final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
@@ -239,7 +245,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             toolButton("folder", "Show in Finder (⇧⌘R)", #selector(revealInFinder(_:))),
             toolButton("trash", "Move to Trash (⌘⌫)", #selector(moveToTrash(_:))),
         ])
-        tools.spacing = 4
+        // The buttons' rectangles almost touch, so a click near an icon hits it.
+        tools.spacing = 2
         tools.translatesAutoresizingMaskIntoConstraints = false
         chrome.addSubview(tools)
 
@@ -283,15 +290,17 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private func toolButton(_ symbol: String, _ tip: String, _ action: Selector, size: CGFloat = 16) -> NSButton {
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
             .withSymbolConfiguration(.init(pointSize: size, weight: .regular))
-        return toolButton(image, tip, action, width: size + 18)
+        return toolButton(image, tip, action)
     }
 
-    private func toolButton(_ image: NSImage?, _ tip: String, _ action: Selector, width: CGFloat = 34) -> NSButton {
-        let button = image.map { NSButton(image: $0, target: self, action: action) } ?? NSButton(title: tip, target: self, action: action)
+    /// A button that takes clicks anywhere in a rectangle around its icon, not just on the icon.
+    private func toolButton(_ image: NSImage?, _ tip: String, _ action: Selector) -> NSButton {
+        let button = image.map { ToolButton(image: $0, target: self, action: action) } ?? ToolButton(title: tip, target: self, action: action)
         button.isBordered = false
         button.contentTintColor = .white
         button.toolTip = tip
-        button.widthAnchor.constraint(equalToConstant: width).isActive = true
+        button.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 32).isActive = true
         return button
     }
 
