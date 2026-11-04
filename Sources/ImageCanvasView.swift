@@ -1,7 +1,7 @@
 import AppKit
 import QuartzCore
 
-/// Shows one image with zoom, pan and quarter-turn rotation.
+/// Shows one image with zoom, pan and quarter-turn rotation, and ellipses drawn on it.
 /// Zoom is in image pixels per device pixel, so 1.0 is "actual size".
 final class ImageCanvasView: NSView {
     /// Picasa's easing, smoothstep 3t² − 2t³. With x control points at 1/3 and 2/3 the
@@ -20,12 +20,37 @@ final class ImageCanvasView: NSView {
     var onClick: ((_ insideImage: Bool) -> Void)?
     var onSwipe: ((_ direction: Int) -> Void)?
     var onViewChange: (() -> Void)?
+    /// An ellipse has been drawn.
+    var onMark: ((Mark) -> Void)?
 
     /// Space kept free for the surrounding chrome when fitting the image.
     var reservedInsets = NSEdgeInsets() { didSet { relayout(animated: true) } }
 
+    /// The ellipses on the photo.
+    var marks: [Mark] = [] { didSet { updateMarkLayers() } }
+    /// Dragging draws an ellipse instead of panning.
+    var isMarking = false {
+        didSet {
+            cancelMark()
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+    var markColor = MarkColor.palette[0]
+    /// In screen pixels.
+    var markWidth: CGFloat = 3
+
     private let imageLayer = CALayer()
-    private var pixelSize: CGSize = .zero
+    /// Holds the marks over the photo, in its upright pixels scaled to the screen, and clips them to it.
+    private let marksLayer = CALayer()
+    private var markLayers: [CAShapeLayer] = []
+    private let draftLayer = CAShapeLayer()
+    /// The ellipse being drawn: the drag started at `dragStart` on the photo and is at
+    /// `dragPoint` in the view.
+    private var draft: Mark?
+    private var dragStart: CGPoint?
+    private var dragPoint: CGPoint?
+    /// Upright size of the full photo, in pixels.
+    private(set) var pixelSize: CGSize = .zero
     /// EXIF orientation of the pixels on the layer; the layer transform turns them upright.
     private var contentsOrientation = 1
     private var turns = 0
@@ -51,6 +76,10 @@ final class ImageCanvasView: NSView {
         imageLayer.minificationFilter = .trilinear
         imageLayer.magnificationFilter = .linear
         layer?.addSublayer(imageLayer)
+        marksLayer.masksToBounds = true
+        draftLayer.fillColor = nil
+        marksLayer.addSublayer(draftLayer)
+        layer?.addSublayer(marksLayer)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -61,6 +90,7 @@ final class ImageCanvasView: NSView {
     // MARK: Content
 
     func setImage(_ image: DecodedImage?, pixelSize size: CGSize, rotation: Int) {
+        cancelMark()
         pixelSize = size.width > 0 ? size : image?.uprightSize ?? .zero
         contentsOrientation = image?.orientation ?? 1
         turns = rotation
@@ -115,6 +145,7 @@ final class ImageCanvasView: NSView {
         CATransaction.setAnimationDuration(Self.closeDuration)
         CATransaction.setAnimationTimingFunction(Self.closeEasing)
         imageLayer.bounds = collapsedBounds
+        marksLayer.setAffineTransform(marksLayer.affineTransform().scaledBy(x: Self.collapsedScale, y: Self.collapsedScale))
         CATransaction.commit()
     }
 
@@ -125,7 +156,7 @@ final class ImageCanvasView: NSView {
 
     /// Turns or mirrors pixels stored in EXIF orientation `orientation` upright, in the layer's
     /// y-up coordinates.
-    static func transform(forOrientation orientation: Int) -> CGAffineTransform {
+    nonisolated static func transform(forOrientation orientation: Int) -> CGAffineTransform {
         switch orientation {
         case 2: return CGAffineTransform(scaleX: -1, y: 1)
         case 3: return CGAffineTransform(rotationAngle: .pi)
@@ -248,13 +279,110 @@ final class ImageCanvasView: NSView {
         imageLayer.setAffineTransform(Self.transform(forOrientation: contentsOrientation)
             .concatenating(CGAffineTransform(rotationAngle: -CGFloat(turns) * .pi / 2)))
         imageLayer.magnificationFilter = zoom >= 3 ? .nearest : .linear
+        // The marks are in upright pixels whatever way the pixels on the layer are stored, so
+        // they only take the user's turns.
+        marksLayer.bounds = CGRect(x: 0, y: 0, width: pixelSize.width * ppp, height: pixelSize.height * ppp)
+        marksLayer.position = imageLayer.position
+        marksLayer.setAffineTransform(CGAffineTransform(rotationAngle: -CGFloat(turns) * .pi / 2))
+        layoutMarks()
         CATransaction.commit()
         if !panning { window?.invalidateCursorRects(for: self) }
         onViewChange?()
     }
 
     override func resetCursorRects() {
-        if canPan { addCursorRect(imageLayer.frame.intersection(bounds), cursor: .openHand) }
+        if isMarking {
+            if hasContents { addCursorRect(imageLayer.frame.intersection(availRect), cursor: .crosshair) }
+        } else if canPan {
+            addCursorRect(imageLayer.frame.intersection(bounds), cursor: .openHand)
+        }
+    }
+
+    // MARK: Marks
+
+    private func updateMarkLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        markLayers.forEach { $0.removeFromSuperlayer() }
+        markLayers = marks.map { _ in
+            let shape = CAShapeLayer()
+            shape.fillColor = nil
+            marksLayer.insertSublayer(shape, below: draftLayer)
+            return shape
+        }
+        layoutMarks()
+        CATransaction.commit()
+    }
+
+    /// Sizes the marks for the zoom, in the transaction of the photo's layout so they move with it.
+    private func layoutMarks() {
+        let ppp = zoom / backingScale
+        for (shape, mark) in zip(markLayers, marks) { place(mark, in: shape, ppp) }
+        if let draft { place(draft, in: draftLayer, ppp) }
+        draftLayer.isHidden = draft == nil
+    }
+
+    private func place(_ mark: Mark, in shape: CAShapeLayer, _ ppp: CGFloat) {
+        shape.frame = marksLayer.bounds
+        shape.path = CGPath(ellipseIn: mark.rect.applying(CGAffineTransform(scaleX: ppp, y: ppp)), transform: nil)
+        shape.lineWidth = mark.lineWidth * ppp
+        shape.strokeColor = mark.color.cgColor
+    }
+
+    /// Where `point` in the view falls on the photo, in its upright pixels.
+    private func photoPoint(_ point: CGPoint) -> CGPoint {
+        let p = marksLayer.convert(point, from: layer)
+        let ppp = zoom / backingScale
+        return CGPoint(x: p.x / ppp, y: p.y / ppp)
+    }
+
+    private func beginMark(at point: CGPoint) {
+        guard hasContents, pixelSize.width > 0 else { return }
+        dragStart = photoPoint(point)
+    }
+
+    /// The drag spans the ellipse's bounds; Shift makes it a circle and Option centres it on
+    /// where the drag started.
+    private func dragMark(to point: CGPoint, _ modifiers: NSEvent.ModifierFlags) {
+        guard let start = dragStart else { return }
+        dragPoint = point
+        let end = photoPoint(point)
+        var dx = end.x - start.x, dy = end.y - start.y
+        if modifiers.contains(.shift) {
+            let side = max(abs(dx), abs(dy))
+            dx = dx < 0 ? -side : side
+            dy = dy < 0 ? -side : side
+        }
+        let rect = modifiers.contains(.option)
+            ? CGRect(x: start.x - abs(dx), y: start.y - abs(dy), width: 2 * abs(dx), height: 2 * abs(dy))
+            : CGRect(x: min(start.x, start.x + dx), y: min(start.y, start.y + dy), width: abs(dx), height: abs(dy))
+        draft = Mark(rect: rect, color: markColor, lineWidth: markWidth / zoom)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layoutMarks()
+        CATransaction.commit()
+    }
+
+    /// Keeps an ellipse that is big enough to be meant and touches the photo.
+    private func endMark() {
+        defer { cancelMark() }
+        guard let mark = draft, max(mark.rect.width, mark.rect.height) * zoom >= 4,
+              mark.rect.intersects(CGRect(origin: .zero, size: pixelSize)) else { return }
+        onMark?(mark)
+    }
+
+    /// Drops the ellipse being drawn. Returns whether one was.
+    @discardableResult
+    func cancelMark() -> Bool {
+        let wasDrawing = dragStart != nil
+        dragStart = nil
+        dragPoint = nil
+        draft = nil
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        draftLayer.isHidden = true
+        CATransaction.commit()
+        return wasDrawing
     }
 
     // MARK: Events
@@ -263,12 +391,22 @@ final class ImageCanvasView: NSView {
         if onKeyDown?(event) != true { super.keyDown(with: event) }
     }
 
+    override func flagsChanged(with event: NSEvent) {
+        if let dragPoint { dragMark(to: dragPoint, event.modifierFlags) }
+        super.flagsChanged(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         didDrag = false
+        if isMarking { beginMark(at: convert(event.locationInWindow, from: nil)) }
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if isMarking {
+            dragMark(to: convert(event.locationInWindow, from: nil), event.modifierFlags)
+            return
+        }
         guard canPan else { return }
         if !didDrag { NSCursor.closedHand.set() }
         didDrag = true
@@ -278,6 +416,11 @@ final class ImageCanvasView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if isMarking {
+            // While drawing, clicks neither zoom nor close the viewer.
+            endMark()
+            return
+        }
         if didDrag {
             window?.invalidateCursorRects(for: self)
             return

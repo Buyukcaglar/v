@@ -41,6 +41,13 @@ final class ImagePipeline {
         cancel { $0.tier == .full }
     }
 
+    /// Lets go of `url`, whose file has changed, so that it is decoded afresh.
+    func forget(_ url: URL) {
+        images[url] = nil
+        if full?.url == url { full = nil }
+        cancel { $0.url == url }
+    }
+
     /// Decodes the screen tier of `url` to fill `box` (device pixels) unless an image with a
     /// long side of at least `minLongSide` is cached or on its way. `first` puts it ahead of the rest.
     func loadScreen(_ url: URL, box: CGSize, minLongSide: Int = 0, first: Bool) {

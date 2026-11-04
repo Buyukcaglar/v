@@ -18,7 +18,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let infoLabel = NSTextField(labelWithString: "")
     private let zoomLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(labelWithString: "")
+    private let toast = NSView()
+    private let toastLabel = NSTextField(labelWithString: "")
+    private var toastFade: DispatchWorkItem?
     private var closeButton: NSButton!
+    private var penButton: NSButton!
+    private var undoButton: NSButton!
+    private var saveButton: NSButton!
+    private var markupBar: MarkupBar!
     private var safeConstraints: [NSLayoutConstraint] = []  // top, bottom, leading, trailing
     private var isClosing = false
     private var closeCount = 0
@@ -53,6 +60,23 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var slideshowTimer: Timer?
     private var slideshowActivity: NSObjectProtocol?
     private var isSlideshow: Bool { slideshowTimer != nil }
+
+    /// The ellipses drawn on one photo.
+    private struct Markup {
+        /// The photo's upright size in pixels, which the marks are drawn on.
+        var size: CGSize
+        var marks: [Mark] = []
+        /// Marks taken back with Undo, the most recent last, for Redo.
+        var undone: [Mark] = []
+        /// The marks as they were last saved.
+        var saved: [Mark] = []
+        var isUnsaved: Bool { !marks.isEmpty && marks != saved }
+    }
+
+    /// The pen is on: dragging on the photo draws, and the colours replace the filmstrip.
+    private var isMarking = false
+    /// Marks drawn on each photo while the viewer is open.
+    private var markups: [URL: Markup] = [:]
 
     private static let chromeHeight: CGFloat = 118
     private static let topBarHeight: CGFloat = 44
@@ -127,6 +151,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             self?.updateZoomLabel()
             self?.updateTiers()
         }
+        canvas.onMark = { [weak self] in self?.addMark($0) }
         let imageMenu = NSMenu()
         imageMenu.addItem(withTitle: "Copy Image", action: #selector(copy(_:)), keyEquivalent: "").target = self
         imageMenu.addItem(withTitle: "Show in Finder", action: #selector(revealInFinder(_:)), keyEquivalent: "").target = self
@@ -155,6 +180,18 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(messageLabel)
 
+        toast.wantsLayer = true
+        toast.layer?.backgroundColor = NSColor(white: 0.16, alpha: 0.92).cgColor
+        toast.layer?.cornerRadius = 8
+        toast.alphaValue = 0
+        toast.translatesAutoresizingMaskIntoConstraints = false
+        toastLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        toastLabel.textColor = .white
+        toastLabel.lineBreakMode = .byTruncatingMiddle
+        toastLabel.translatesAutoresizingMaskIntoConstraints = false
+        toast.addSubview(toastLabel)
+        content.addSubview(toast)
+
         chrome.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(chrome)
 
@@ -169,6 +206,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         zoomLabel.alignment = .right
         zoomLabel.widthAnchor.constraint(equalToConstant: 48).isActive = true
 
+        penButton = toolButton("pencil.tip.crop.circle", "Draw Circles (P)", #selector(toggleMarking(_:)))
+        penButton.wantsLayer = true
+        penButton.layer?.cornerRadius = 6
+        undoButton = toolButton("arrow.uturn.backward", "Undo (⌘Z)", #selector(undoMark(_:)))
+        saveButton = toolButton("square.and.arrow.down", "Save Marked Copy (⌘S)", #selector(saveMarkup(_:)))
+        markupBar = MarkupBar(tools: [undoButton, saveButton])
+        markupBar.onChange = { [weak self] in self?.penChanged() }
+        markupBar.isHidden = true
+        markupBar.translatesAutoresizingMaskIntoConstraints = false
+        chrome.addSubview(markupBar)
+        penChanged()
+        showMarks()
+
         let tools = NSStackView(views: [
             toolButton("chevron.left", "Previous (←)", #selector(previousImage(_:))),
             toolButton("chevron.right", "Next (→)", #selector(nextImage(_:))),
@@ -178,9 +228,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             spacer(),
             toolButton("minus.magnifyingglass", "Zoom Out (−)", #selector(zoomOut(_:))),
             toolButton("arrow.down.right.and.arrow.up.left", "Zoom to Fit (⌘9)", #selector(zoomToFit(_:))),
-            toolButton("1.magnifyingglass", "Actual Size (⌘0)", #selector(actualSize(_:))),
+            toolButton(Self.actualSizeImage, "Actual Size (⌘0)", #selector(actualSize(_:))),
             toolButton("plus.magnifyingglass", "Zoom In (+)", #selector(zoomIn(_:))),
             zoomLabel,
+            spacer(),
+            penButton,
             spacer(),
             toolButton("play.fill", "Slideshow (⇧⌘F)", #selector(toggleSlideshow(_:))),
             toolButton("doc.on.doc", "Copy Image (⌘C)", #selector(copy(_:))),
@@ -201,6 +253,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             messageLabel.centerXAnchor.constraint(equalTo: safe.centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
 
+            toast.centerXAnchor.constraint(equalTo: safe.centerXAnchor),
+            toast.centerYAnchor.constraint(equalTo: infoLabel.centerYAnchor),
+            toastLabel.topAnchor.constraint(equalTo: toast.topAnchor, constant: 6),
+            toastLabel.bottomAnchor.constraint(equalTo: toast.bottomAnchor, constant: -6),
+            toastLabel.leadingAnchor.constraint(equalTo: toast.leadingAnchor, constant: 14),
+            toastLabel.trailingAnchor.constraint(equalTo: toast.trailingAnchor, constant: -14),
+            toastLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
+
             chrome.bottomAnchor.constraint(equalTo: safe.bottomAnchor, constant: -16),
             chrome.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 20),
             chrome.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -20),
@@ -211,6 +271,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             filmstrip.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
             filmstrip.heightAnchor.constraint(equalToConstant: 64),
 
+            markupBar.centerXAnchor.constraint(equalTo: chrome.centerXAnchor),
+            markupBar.centerYAnchor.constraint(equalTo: filmstrip.centerYAnchor),
+
             tools.topAnchor.constraint(equalTo: filmstrip.bottomAnchor, constant: 4),
             tools.centerXAnchor.constraint(equalTo: chrome.centerXAnchor),
             tools.heightAnchor.constraint(equalToConstant: 34),
@@ -218,19 +281,35 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     private func toolButton(_ symbol: String, _ tip: String, _ action: Selector, size: CGFloat = 16) -> NSButton {
-        let button: NSButton
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
-            .withSymbolConfiguration(.init(pointSize: size, weight: .regular)) {
-            button = NSButton(image: image, target: self, action: action)
-        } else {
-            button = NSButton(title: tip, target: self, action: action)
-        }
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+            .withSymbolConfiguration(.init(pointSize: size, weight: .regular))
+        return toolButton(image, tip, action, width: size + 18)
+    }
+
+    private func toolButton(_ image: NSImage?, _ tip: String, _ action: Selector, width: CGFloat = 34) -> NSButton {
+        let button = image.map { NSButton(image: $0, target: self, action: action) } ?? NSButton(title: tip, target: self, action: action)
         button.isBordered = false
         button.contentTintColor = .white
         button.toolTip = tip
-        button.widthAnchor.constraint(equalToConstant: size + 18).isActive = true
+        button.widthAnchor.constraint(equalToConstant: width).isActive = true
         return button
     }
+
+    /// "1:1" as a template image, for Actual Size.
+    private static let actualSizeImage: NSImage = {
+        let line = CTLineCreateWithAttributedString(NSAttributedString(
+            string: "1:1", attributes: [.font: NSFont.systemFont(ofSize: 15, weight: .semibold)]))
+        let glyphs = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds).integral
+        let image = NSImage(size: glyphs.size, flipped: false) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            ctx.textPosition = CGPoint(x: -glyphs.minX, y: -glyphs.minY)
+            CTLineDraw(line, ctx)
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Actual Size"
+        return image
+    }()
 
     private func spacer() -> NSView {
         let v = NSView()
@@ -480,6 +559,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         canvas.setImage(image, pixelSize: info?.pixelSize ?? .zero, rotation: url.flatMap { rotations[$0] } ?? 0)
         canvasURL = url
         canvasShowsFull = false
+        showMarks()
     }
 
     private func showFailure(_ url: URL) {
@@ -635,6 +715,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func handleKey(_ event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection([.command, .option, .control])
+        // Ctrl-S saves as ⌘S does, for keyboards and remote-desktop clients that send Ctrl as it is.
+        if mods == .control, event.charactersIgnoringModifiers == "s" {
+            saveMarkup(nil)
+            return true
+        }
         guard mods.isEmpty else { return false }
         if let key = event.specialKey {
             switch key {
@@ -647,8 +732,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return true
         }
         switch event.keyCode {
-        case 53:  // Esc
-            if isSlideshow { stopSlideshow() } else { closeViewer(nil) }
+        case 53:  // Esc: drops the ellipse being drawn, then puts the pen away, then closes
+            if canvas.cancelMark() {
+            } else if isMarking {
+                setMarking(false)
+            } else if isSlideshow {
+                stopSlideshow()
+            } else {
+                closeViewer(nil)
+            }
             return true
         case 49:  // Space
             step(event.modifierFlags.contains(.shift) ? -1 : 1)
@@ -661,6 +753,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         case "-", "_": canvas.zoomOut()
         case "0", "1": canvas.zoomToActualSize()  // as ⌘0
         case "9": canvas.zoomToFit()  // as ⌘9
+        case "p", "P": toggleMarking(nil)
         default: return false
         }
         return true
@@ -691,6 +784,142 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     @objc func zoomOut(_ sender: Any?) { canvas.zoomOut() }
     @objc func zoomToFit(_ sender: Any?) { canvas.zoomToFit() }
     @objc func actualSize(_ sender: Any?) { canvas.zoomToActualSize() }
+
+    // MARK: Drawing
+
+    @objc func toggleMarking(_ sender: Any?) { setMarking(!isMarking) }
+
+    private func setMarking(_ on: Bool) {
+        guard on != isMarking, currentURL != nil || !on else { return }
+        if on, isSlideshow { stopSlideshow() }
+        isMarking = on
+        canvas.isMarking = on
+        filmstrip.isHidden = on
+        markupBar.isHidden = !on
+        penButton.layer?.backgroundColor = on ? NSColor(white: 1, alpha: 0.22).cgColor : nil
+    }
+
+    private func penChanged() {
+        canvas.markColor = markupBar.color
+        canvas.markWidth = CGFloat(markupBar.width.rawValue)
+    }
+
+    /// The ellipse goes on the photo it was drawn on.
+    private func addMark(_ mark: Mark) {
+        guard let url = canvasURL else { return }
+        markups[url, default: Markup(size: canvas.pixelSize)].marks.append(mark)
+        markups[url]?.undone.removeAll()
+        showMarks()
+    }
+
+    /// Shows the marks of the photo on the canvas.
+    private func showMarks() {
+        let marks = canvasURL.flatMap { markups[$0]?.marks } ?? []
+        canvas.marks = marks
+        undoButton.isEnabled = !marks.isEmpty
+        saveButton.isEnabled = !marks.isEmpty
+    }
+
+    @objc func undoMark(_ sender: Any?) {
+        guard let url = currentURL, let mark = markups[url]?.marks.popLast() else { return }
+        markups[url]?.undone.append(mark)
+        showMarks()
+    }
+
+    @objc func redoMark(_ sender: Any?) {
+        guard let url = currentURL, let mark = markups[url]?.undone.popLast() else { return }
+        markups[url]?.marks.append(mark)
+        showMarks()
+    }
+
+    /// Saves a copy of the photo with its marks drawn in next to it, as "Name_markdown.ext".
+    @objc func saveMarkup(_ sender: Any?) {
+        guard let url = currentURL, let markup = markups[url], !markup.marks.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        save(markup, of: url)
+    }
+
+    private func save(_ markup: Markup, of url: URL) {
+        showToast("Saving…")
+        let marks = markup.marks
+        MarkupWriter.save(marks, on: url, markedSize: markup.size, turns: rotations[url] ?? 0) { [weak self] result in
+            switch result {
+            case .success(let copy):
+                self?.saved(marks, of: url, to: copy)
+            case .failure(let error):
+                self?.toast.alphaValue = 0
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
+
+    /// The copy shows up in the filmstrip next to its photo, where Finder sorts it.
+    private func saved(_ marks: [Mark], of url: URL, to copy: URL) {
+        markups[url]?.saved = marks
+        showToast("Saved “\(copy.lastPathComponent)”")
+        if files.contains(copy) {
+            // It replaced an earlier copy: let go of what is cached of that one.
+            thumbCache.removeObject(forKey: copy as NSURL)
+            thumbLoads.removeValue(forKey: copy)?.cancel()
+            infos[copy] = nil
+            pipeline.forget(copy)
+            filmstrip.thumbnailsChanged()
+            if copy == currentURL { display() } else if neighborURLs.contains(copy) { preloadNeighbors() }
+        } else if let i = files.firstIndex(of: url) {
+            // "IMG_1234_markdown.JPG" sorts just before "IMG_1234.JPG".
+            let at = copy.lastPathComponent.localizedStandardCompare(url.lastPathComponent) == .orderedAscending ? i : i + 1
+            files.insert(copy, at: at)
+            if index >= at { index += 1 }
+            filmstrip.urls = files
+            filmstrip.current = index
+            updateInfoLabel(currentInfo)
+            pipeline.keep([files[index]] + neighborURLs)
+            preloadNeighbors()
+        }
+    }
+
+    /// Offers to save the marks that aren't saved yet. Returns false if the user cancels.
+    func confirmUnsavedMarks() -> Bool {
+        let unsaved = markups.filter { $0.value.isUnsaved }
+        guard let first = unsaved.first else { return true }
+        let alert = NSAlert()
+        alert.messageText = unsaved.count == 1
+            ? "Do you want to save the marks on “\(first.key.lastPathComponent)”?"
+            : "Do you want to save the marks on \(unsaved.count) photos?"
+        alert.informativeText = "A copy with the marks is saved next to each photo, with “_markdown” added to its name. If you don’t save, your marks will be lost."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Don’t Save")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            for (url, markup) in unsaved { save(markup, of: url) }
+            return true
+        case .alertThirdButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Shows `text` at the top of the screen for a moment.
+    private func showToast(_ text: String) {
+        toastLabel.stringValue = text
+        toastFade?.cancel()
+        NSAnimationContext.runAnimationGroup {
+            $0.duration = 0.15
+            toast.animator().alphaValue = 1
+        }
+        let fade = DispatchWorkItem { [weak self] in
+            NSAnimationContext.runAnimationGroup {
+                $0.duration = 0.5
+                self?.toast.animator().alphaValue = 0
+            }
+        }
+        toastFade = fade
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: fade)
+    }
 
     @objc func revealInFinder(_ sender: Any?) {
         guard let url = currentURL else { return }
@@ -729,6 +958,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         files.remove(at: index)
         thumbCache.removeObject(forKey: url as NSURL)
         rotations[url] = nil
+        markups[url] = nil
         if files.isEmpty {
             closeViewer(nil)
             return
@@ -743,6 +973,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func startSlideshow() {
         guard files.count > 1 else { return }
+        setMarking(false)
         restartSlideshowTimer()
         slideshowActivity = ProcessInfo.processInfo.beginActivity(
             options: [.idleDisplaySleepDisabled, .userInitiated], reason: "Slideshow")
@@ -783,7 +1014,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     @objc func closeViewer(_ sender: Any?) {
-        guard !isClosing else { return }
+        guard !isClosing, confirmUnsavedMarks() else { return }
         isClosing = true
         slideshowTimer?.invalidate()
         slideshowTimer = nil
@@ -834,6 +1065,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return files.count > 1
         case #selector(nextImage(_:)), #selector(previousImage(_:)), #selector(firstImage(_:)), #selector(lastImage(_:)):
             return files.count > 1
+        case #selector(toggleMarking(_:)):
+            item.state = isMarking ? .on : .off
+            return currentURL != nil
+        case #selector(saveMarkup(_:)), #selector(undoMark(_:)):
+            return currentURL.flatMap { markups[$0] }?.marks.isEmpty == false
+        case #selector(redoMark(_:)):
+            return currentURL.flatMap { markups[$0] }?.undone.isEmpty == false
         default:
             return currentURL != nil || item.action == #selector(closeViewer(_:))
         }

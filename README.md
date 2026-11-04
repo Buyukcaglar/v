@@ -13,7 +13,10 @@ decode: JPEG, HEIC, PNG, TIFF, GIF (animated), WebP, AVIF, camera RAW and more.
   10,000 photos.
 - Keeps memory low while browsing: only the current photo and its neighbours stay decoded, at the
   size your screen needs. Full resolution is loaded only when you zoom in past that.
-- Zoom around the pointer with the mouse wheel or a trackpad pinch, and pan by dragging.
+- Zoom around the pointer with the mouse wheel or a trackpad pinch, and pan by dragging. 1:1 shows
+  the photo at its actual size.
+- Circle what matters with the pen, in 16 colours and three line widths, and save a copy with the
+  marks drawn in next to the photo.
 - Slideshow, rotate, copy, show in Finder and move to Trash.
 - Can make itself the default viewer for every image type in one step.
 
@@ -58,14 +61,29 @@ restarts `lsd`.
 | 0 or 1, ⌘0 | Actual size |
 | 9, ⌘9 | Zoom to fit |
 | ⌘L / ⌘R | Rotate left / right |
+| P | Pen on / off |
+| ⌘S, ⌃S | Save a copy with the marks |
+| ⌘Z / ⇧⌘Z | Undo / redo a mark |
 | ⇧⌘F | Start slideshow |
 | ⌘C | Copy |
 | ⇧⌘R | Show in Finder |
 | ⌘⌫ | Move to Trash |
-| Esc, ⌘W | Stop slideshow / close |
+| Esc, ⌘W | Put the pen away, stop slideshow / close |
 
 Clicking the dimmed background also closes the viewer. Right-clicking the photo offers Copy Image and
 Show in Finder.
+
+## Marking up photos
+
+With the pen on, the colours and line widths take the filmstrip's place. Drag across the photo to
+draw an ellipse; hold ⇧ for a circle or ⌥ to draw from the centre. Lines are 1, 3 or 5 pixels on
+screen at the zoom you draw at, so at 1:1 they are that many pixels of the photo. The marks stay on
+the photo, turned and zoomed with it, until the viewer closes; V asks before closing with marks that
+aren't saved.
+
+⌘S saves a copy with the marks drawn in next to the photo, as `IMG_1234_markdown.JPG`, upright and
+turned as on screen. Formats macOS can't write, such as camera RAW and WebP, are saved as JPEG (PNG
+when they have transparency), and an animated GIF is saved as a still.
 
 ## Performance tools
 

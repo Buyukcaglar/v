@@ -15,6 +15,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let viewer, !viewer.confirmUnsavedMarks() { return .terminateCancel }
+        guard MarkupWriter.pending > 0 else { return .terminateNow }
+        // Marked copies still being written finish first.
+        MarkupWriter.onIdle = { NSApp.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
+    }
+
     // AppKit asks for an untitled document only when the app is launched or reopened (from the
     // Dock or Launchpad) without files to open: ask for some.
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { true }
@@ -81,11 +89,15 @@ enum MainMenu {
         main.addItem(submenu("File", [
             item("Open…", #selector(AppDelegate.openDocument(_:)), "o"),
             item("Close", #selector(ViewerWindowController.closeViewer(_:)), "w"),
+            item("Save Marked Copy", #selector(ViewerWindowController.saveMarkup(_:)), "s"),
             .separator(),
             item("Show in Finder", #selector(ViewerWindowController.revealInFinder(_:)), "r", [.command, .shift]),
             item("Move to Trash", #selector(ViewerWindowController.moveToTrash(_:)), "\u{8}"),
         ]))
         main.addItem(submenu("Edit", [
+            item("Undo", #selector(ViewerWindowController.undoMark(_:)), "z"),
+            item("Redo", #selector(ViewerWindowController.redoMark(_:)), "z", [.command, .shift]),
+            .separator(),
             item("Copy", #selector(ViewerWindowController.copy(_:)), "c"),
         ]))
         main.addItem(submenu("View", [
@@ -99,6 +111,8 @@ enum MainMenu {
         main.addItem(submenu("Image", [
             item("Rotate Left", #selector(ViewerWindowController.rotateLeft(_:)), "l"),
             item("Rotate Right", #selector(ViewerWindowController.rotateRight(_:)), "r"),
+            .separator(),
+            item("Draw Circles", #selector(ViewerWindowController.toggleMarking(_:))),
         ]))
         main.addItem(submenu("Go", [
             item("Next Photo", #selector(ViewerWindowController.nextImage(_:)), "]"),
