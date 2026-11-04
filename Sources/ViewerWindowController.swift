@@ -12,6 +12,14 @@ private final class ToolButton: NSButton {
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
 }
 
+/// Keeps clicks between the bar's buttons and thumbnails. Passed on, they would reach the
+/// photo behind it, which closes the viewer on a click outside the photo.
+private final class BarBackground: NSView {
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseDragged(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {}
+}
+
 /// A Picasa Photo Viewer style overlay: the desktop is dimmed, the photo floats in the
 /// middle, and a filmstrip with the tools sits at the bottom.
 final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
@@ -22,7 +30,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let filmstrip = FilmstripView()
     private let chrome = NSView()
     /// A dark band behind the filmstrip and the buttons, so that they stand out over a zoomed-in photo.
-    private let chromeBackground = NSView()
+    private let chromeBackground = BarBackground()
     /// The band's top: over the filmstrip, or over the buttons alone while the filmstrip is hidden.
     private var backgroundTops: (strip: NSLayoutConstraint, tools: NSLayoutConstraint)!
     private let infoLabel = NSTextField(labelWithString: "")

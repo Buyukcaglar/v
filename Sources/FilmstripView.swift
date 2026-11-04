@@ -30,6 +30,16 @@ final class FilmstripView: NSView {
     private var lastAppear: CFTimeInterval = 0
     private var slotLayers: [URL: CALayer] = [:]
 
+    /// The thumbnails other than the current one are dimmed until the pointer is over the strip.
+    private static let dimmedOpacity: Float = 0.55
+    private static let dimDuration: CFTimeInterval = 0.25
+    private var isHovered = false {
+        didSet { if isHovered != oldValue { updateDimming(animated: true) } }
+    }
+    private func opacity(for url: URL) -> Float {
+        isHovered || urls.indices.contains(current) && urls[current] == url ? 1 : Self.dimmedOpacity
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -82,7 +92,7 @@ final class FilmstripView: NSView {
             let layer = slotLayers[url] ?? makeSlotLayer(for: url)
             layer.contents = image
             layer.frame = aspectFit(CGSize(width: image.width, height: image.height), in: r.insetBy(dx: 2, dy: 2))
-            layer.opacity = i == current ? 1 : 0.55
+            layer.opacity = opacity(for: url)
             let border = layer.sublayers![0]
             border.frame = layer.bounds.insetBy(dx: -2.5, dy: -2.5)
             border.isHidden = i != current
@@ -112,7 +122,7 @@ final class FilmstripView: NSView {
     }
 
     /// Grows the slot out of its middle while it fades in. Both animations run towards the
-    /// model values, so a slot that becomes current meanwhile still ends up opaque.
+    /// model values, so a slot dimmed or lit meanwhile still ends up as it should.
     private func popIn(_ layer: CALayer, at time: CFTimeInterval) {
         let grow = CABasicAnimation(keyPath: "transform.scale")
         grow.fromValue = 0
@@ -127,8 +137,37 @@ final class FilmstripView: NSView {
         layer.add(group, forKey: "pop")
     }
 
+    /// Fades the thumbnails in or out of their dimmed state.
+    private func updateDimming(animated: Bool) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(animated ? Self.dimDuration : 0)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .default))  // CSS "ease"
+        CATransaction.setDisableActions(!animated)
+        for (url, layer) in slotLayers { layer.opacity = opacity(for: url) }
+        CATransaction.commit()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+    override func viewDidHide() {
+        super.viewDidHide()
+        isHovered = false
+    }
+
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if let hit = slotRects().first(where: { $0.rect.contains(p) }) { onSelect?(hit.index) }
     }
+
+    // The click ends here. Passed on, it would reach the photo behind the strip, which closes
+    // the viewer on a click outside the photo.
+    override func mouseDragged(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {}
 }
