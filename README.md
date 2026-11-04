@@ -14,7 +14,8 @@ decode: JPEG, HEIC, PNG, TIFF, GIF (animated), WebP, AVIF, camera RAW and more.
 - Keeps memory low while browsing: only the current photo and its neighbours stay decoded, at the
   size your screen needs. Full resolution is loaded only when you zoom in past that.
 - Zoom around the pointer with the mouse wheel or a trackpad pinch, and pan by dragging. 1:1 shows
-  the photo at its actual size.
+  the photo at its actual size, and Return fits it again. Each photo keeps its zoom and pan until
+  V quits.
 - Circle what matters with the pen, in 16 colours and three line widths, and save a copy with the
   marks drawn in next to the photo.
 - Slideshow, rotate, copy, show in Finder and move to Trash.
@@ -59,13 +60,14 @@ restarts `lsd`.
 | Home / End | First / last photo |
 | + / − | Zoom in / out |
 | 0 or 1, ⌘0 | Actual size |
-| 9, ⌘9 | Zoom to fit |
+| Return, 9, ⌘9 | Zoom to fit |
 | ⌘L / ⌘R | Rotate left / right |
 | P | Pen on / off |
 | Hold Space (pen on) | Pan instead of drawing |
 | ⌘S, ⌃S | Save a copy with the marks |
 | ⌘Z / ⇧⌘Z | Undo / redo a mark |
 | ⇧⌘F | Start slideshow |
+| ⌘F, ⌃F | Hide / show the filmstrip |
 | ⌘C | Copy |
 | ⇧⌘R | Show in Finder |
 | ⌘⌫ | Move to Trash |

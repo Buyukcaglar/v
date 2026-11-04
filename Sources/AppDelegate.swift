@@ -106,6 +106,7 @@ enum MainMenu {
             item("Actual Size", #selector(ViewerWindowController.actualSize(_:)), "0"),
             item("Zoom to Fit", #selector(ViewerWindowController.zoomToFit(_:)), "9"),
             .separator(),
+            item("Hide Filmstrip", #selector(ViewerWindowController.toggleFilmstrip(_:)), "f"),
             item("Start Slideshow", #selector(ViewerWindowController.toggleSlideshow(_:)), "f", [.command, .shift]),
         ]))
         main.addItem(submenu("Image", [

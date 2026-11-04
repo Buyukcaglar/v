@@ -21,6 +21,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let canvas = ImageCanvasView()
     private let filmstrip = FilmstripView()
     private let chrome = NSView()
+    /// A dark band behind the filmstrip and the buttons, so that they stand out over a zoomed-in photo.
+    private let chromeBackground = NSView()
+    /// The band's top: over the filmstrip, or over the buttons alone while the filmstrip is hidden.
+    private var backgroundTops: (strip: NSLayoutConstraint, tools: NSLayoutConstraint)!
     private let infoLabel = NSTextField(labelWithString: "")
     private let zoomLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(labelWithString: "")
@@ -39,6 +43,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var files: [URL] = []
     private var index = 0
     private var rotations: [URL: Int] = [:]
+    /// Each photo's zoom and pan, kept until V quits. A fitted photo has none.
+    private static var views: [URL: ImageCanvasView.ViewState] = [:]
     private var generation = 0
     private let pipeline: ImagePipeline
     private var infos: [URL: ImageInfo] = [:]
@@ -81,6 +87,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     /// The pen is on: dragging on the photo draws, and the colours replace the filmstrip.
     private var isMarking = false
+    /// The filmstrip is hidden with ⌘F. It stays hidden, also the next time, until shown again.
+    private var isFilmstripHidden = UserDefaults.standard.bool(forKey: ViewerWindowController.hideFilmstripKey)
+    private static let hideFilmstripKey = "HideFilmstrip"
     /// Marks drawn on each photo while the viewer is open.
     private var markups: [URL: Markup] = [:]
 
@@ -154,8 +163,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         canvas.onClick = { [weak self] inside in self?.canvasClicked(insideImage: inside) }
         canvas.onSwipe = { [weak self] dir in self?.step(dir) }
         canvas.onViewChange = { [weak self] in
-            self?.updateZoomLabel()
-            self?.updateTiers()
+            guard let self else { return }
+            if let url = self.canvasURL { Self.views[url] = self.canvas.viewState }
+            self.updateZoomLabel()
+            self.updateTiers()
         }
         canvas.onMark = { [weak self] in self?.addMark($0) }
         let imageMenu = NSMenu()
@@ -200,6 +211,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
         chrome.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(chrome)
+
+        chromeBackground.wantsLayer = true
+        chromeBackground.layer?.backgroundColor = NSColor(white: 0, alpha: 0.7).cgColor
+        chromeBackground.layer?.cornerRadius = 10
+        chromeBackground.translatesAutoresizingMaskIntoConstraints = false
+        chrome.addSubview(chromeBackground)
 
         filmstrip.translatesAutoresizingMaskIntoConstraints = false
         filmstrip.thumbnail = { [weak self] in self?.thumbnail(at: $0) }
@@ -284,7 +301,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             tools.topAnchor.constraint(equalTo: filmstrip.bottomAnchor, constant: 4),
             tools.centerXAnchor.constraint(equalTo: chrome.centerXAnchor),
             tools.heightAnchor.constraint(equalToConstant: 34),
+
+            chromeBackground.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
+            chromeBackground.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
+            chromeBackground.bottomAnchor.constraint(equalTo: chrome.bottomAnchor),
         ])
+        backgroundTops = (chromeBackground.topAnchor.constraint(equalTo: chrome.topAnchor),
+                          chromeBackground.topAnchor.constraint(equalTo: tools.topAnchor, constant: -8))
+        updateStrip()
     }
 
     private func toolButton(_ symbol: String, _ tip: String, _ action: Selector, size: CGFloat = 16) -> NSButton {
@@ -565,9 +589,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func setCanvas(_ image: DecodedImage?, of url: URL?) {
         let info = url == currentURL ? currentInfo : nil
-        canvas.setImage(image, pixelSize: info?.pixelSize ?? .zero, rotation: url.flatMap { rotations[$0] } ?? 0)
+        // Set first: laying the photo out reports its view, which is kept under `canvasURL` and,
+        // when the photo comes back zoomed in, loads the sharper image it needs.
         canvasURL = url
         canvasShowsFull = false
+        canvas.setImage(image, pixelSize: info?.pixelSize ?? .zero, rotation: url.flatMap { rotations[$0] } ?? 0,
+                        view: url.flatMap { Self.views[$0] })
         showMarks()
     }
 
@@ -724,9 +751,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     private func handleKey(_ event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection([.command, .option, .control])
-        // Ctrl-S saves as ⌘S does, for keyboards and remote-desktop clients that send Ctrl as it is.
-        if mods == .control, event.charactersIgnoringModifiers == "s" {
-            saveMarkup(nil)
+        // Ctrl-S and Ctrl-F work as ⌘S and ⌘F do, for keyboards and remote-desktop clients that
+        // send Ctrl as it is.
+        if mods == .control {
+            switch event.charactersIgnoringModifiers {
+            case "s": saveMarkup(nil)
+            case "f": toggleFilmstrip(nil)
+            default: return false
+            }
             return true
         }
         guard mods.isEmpty else { return false }
@@ -736,6 +768,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             case .leftArrow, .upArrow, .pageUp: step(-1)
             case .home: go(to: 0)
             case .end: go(to: files.count - 1)
+            case .carriageReturn, .enter: canvas.zoomToFit()  // Return or Enter: as the photo first opens
             default: return false
             }
             return true
@@ -794,6 +827,24 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
     @objc func zoomToFit(_ sender: Any?) { canvas.zoomToFit() }
     @objc func actualSize(_ sender: Any?) { canvas.zoomToActualSize() }
 
+    /// Hides or shows the filmstrip. The photo keeps its place either way.
+    @objc func toggleFilmstrip(_ sender: Any?) {
+        isFilmstripHidden.toggle()
+        UserDefaults.standard.set(isFilmstripHidden, forKey: Self.hideFilmstripKey)
+        updateStrip()
+    }
+
+    /// The filmstrip shows unless it is hidden or the pen's colours have its place. The band
+    /// behind the bar shrinks to the buttons while neither shows.
+    private func updateStrip() {
+        filmstrip.isHidden = isMarking || isFilmstripHidden
+        markupBar.isHidden = !isMarking
+        let (on, off) = isMarking || !isFilmstripHidden
+            ? (backgroundTops.strip, backgroundTops.tools) : (backgroundTops.tools, backgroundTops.strip)
+        off.isActive = false
+        on.isActive = true
+    }
+
     // MARK: Drawing
 
     @objc func toggleMarking(_ sender: Any?) { setMarking(!isMarking) }
@@ -803,8 +854,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if on, isSlideshow { stopSlideshow() }
         isMarking = on
         canvas.isMarking = on
-        filmstrip.isHidden = on
-        markupBar.isHidden = !on
+        updateStrip()
         penButton.layer?.backgroundColor = on ? NSColor(white: 1, alpha: 0.22).cgColor : nil
     }
 
@@ -967,6 +1017,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         files.remove(at: index)
         thumbCache.removeObject(forKey: url as NSURL)
         rotations[url] = nil
+        Self.views[url] = nil
         markups[url] = nil
         if files.isEmpty {
             closeViewer(nil)
@@ -1079,6 +1130,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return files.count > 1
         case #selector(nextImage(_:)), #selector(previousImage(_:)), #selector(firstImage(_:)), #selector(lastImage(_:)):
             return files.count > 1
+        case #selector(toggleFilmstrip(_:)):
+            item.title = isFilmstripHidden ? "Show Filmstrip" : "Hide Filmstrip"
+            return true
         case #selector(toggleMarking(_:)):
             item.state = isMarking ? .on : .off
             return currentURL != nil

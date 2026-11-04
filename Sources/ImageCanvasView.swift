@@ -75,6 +75,15 @@ final class ImageCanvasView: NSView {
     private var swipeAccum: CGFloat = 0
     private var swipeFired = false
 
+    /// A zoom and pan the user chose for a photo.
+    struct ViewState: Equatable {
+        var zoom: CGFloat
+        var pan: CGPoint
+    }
+
+    /// The zoom and pan, or nil while the photo is fitted.
+    var viewState: ViewState? { isFit ? nil : ViewState(zoom: zoom, pan: pan) }
+
     var hasContents: Bool { imageLayer.contents != nil }
     var rotation: Int { ((turns % 4) + 4) % 4 }
 
@@ -98,13 +107,20 @@ final class ImageCanvasView: NSView {
 
     // MARK: Content
 
-    func setImage(_ image: DecodedImage?, pixelSize size: CGSize, rotation: Int) {
+    /// Shows `image` fitted, or at `view`, the zoom and pan it had before.
+    func setImage(_ image: DecodedImage?, pixelSize size: CGSize, rotation: Int, view: ViewState? = nil) {
         cancelMark()
         pixelSize = size.width > 0 ? size : image?.uprightSize ?? .zero
         contentsOrientation = image?.orientation ?? 1
         turns = rotation
         isFit = true
         pan = .zero
+        if let view, pixelSize.width > 0 {
+            // As in setZoom; a zoom no bigger than the fit, as on a bigger screen, fits the photo.
+            zoom = min(view.zoom, 32)
+            pan = view.pan
+            isFit = zoom <= fitZoom + 0.0001
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         imageLayer.contents = image?.contents
