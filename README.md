@@ -62,6 +62,7 @@ restarts `lsd`.
 | 9, ⌘9 | Zoom to fit |
 | ⌘L / ⌘R | Rotate left / right |
 | P | Pen on / off |
+| Hold Space (pen on) | Pan instead of drawing |
 | ⌘S, ⌃S | Save a copy with the marks |
 | ⌘Z / ⇧⌘Z | Undo / redo a mark |
 | ⇧⌘F | Start slideshow |
@@ -76,12 +77,13 @@ Show in Finder.
 ## Marking up photos
 
 With the pen on, the colours and line widths take the filmstrip's place. Drag across the photo to
-draw an ellipse; hold ⇧ for a circle or ⌥ to draw from the centre. Lines are 1, 3 or 5 pixels on
-screen at the zoom you draw at, so at 1:1 they are that many pixels of the photo. The marks stay on
-the photo, turned and zoomed with it, until the viewer closes; V asks before closing with marks that
-aren't saved.
+draw an ellipse; hold ⇧ for a circle or ⌥ to draw from the centre. To mark another part of a
+zoomed-in photo, hold Space and drag to pan; Space doesn't turn to the next photo while the pen is
+on. Lines are 1, 3 or 5 pixels on screen at the zoom you draw at, so at 1:1 they are that many
+pixels of the photo. The marks stay on the photo, turned and zoomed with it, until the viewer
+closes; V asks before closing with marks that aren't saved.
 
-⌘S saves a copy with the marks drawn in next to the photo, as `IMG_1234_markdown.JPG`, upright and
+⌘S saves a copy with the marks drawn in next to the photo, as `IMG_1234_marked.JPG`, upright and
 turned as on screen. Formats macOS can't write, such as camera RAW and WebP, are saved as JPEG (PNG
 when they have transparency), and an animated GIF is saved as a still.
 

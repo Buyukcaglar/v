@@ -28,7 +28,7 @@ final class ImageCanvasView: NSView {
 
     /// The ellipses on the photo.
     var marks: [Mark] = [] { didSet { updateMarkLayers() } }
-    /// Dragging draws an ellipse instead of panning.
+    /// Dragging draws an ellipse instead of panning, unless Space is held.
     var isMarking = false {
         didSet {
             cancelMark()
@@ -63,6 +63,15 @@ final class ImageCanvasView: NSView {
     private static let collapsedScale: CGFloat = 0.03
 
     private var didDrag = false
+    /// Space is held: with the pen on, dragging pans the photo as it does without the pen.
+    private var spaceHeld = false {
+        didSet {
+            // A drag under way keeps its cursor until it ends.
+            if spaceHeld != oldValue, dragStart == nil, !grabbing { window?.invalidateCursorRects(for: self) }
+        }
+    }
+    /// The drag under way pans the photo though the pen is on.
+    private var grabbing = false
     private var swipeAccum: CGFloat = 0
     private var swipeFired = false
 
@@ -291,7 +300,7 @@ final class ImageCanvasView: NSView {
     }
 
     override func resetCursorRects() {
-        if isMarking {
+        if isMarking && !spaceHeld {
             if hasContents { addCursorRect(imageLayer.frame.intersection(availRect), cursor: .crosshair) }
         } else if canPan {
             addCursorRect(imageLayer.frame.intersection(bounds), cursor: .openHand)
@@ -388,8 +397,21 @@ final class ImageCanvasView: NSView {
     // MARK: Events
 
     override func keyDown(with event: NSEvent) {
+        // With the pen on, Space is held to pan instead of turning to the next photo.
+        if isMarking, event.keyCode == 49 {
+            spaceHeld = true
+            return
+        }
         if onKeyDown?(event) != true { super.keyDown(with: event) }
     }
+
+    override func keyUp(with event: NSEvent) {
+        if event.keyCode == 49 { spaceHeld = false }
+        super.keyUp(with: event)
+    }
+
+    /// Counts Space as let go of, for when its release goes to another window.
+    func letGoOfSpace() { spaceHeld = false }
 
     override func flagsChanged(with event: NSEvent) {
         if let dragPoint { dragMark(to: dragPoint, event.modifierFlags) }
@@ -399,11 +421,12 @@ final class ImageCanvasView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         didDrag = false
-        if isMarking { beginMark(at: convert(event.locationInWindow, from: nil)) }
+        grabbing = isMarking && spaceHeld
+        if isMarking && !grabbing { beginMark(at: convert(event.locationInWindow, from: nil)) }
     }
 
     override func mouseDragged(with event: NSEvent) {
-        if isMarking {
+        if isMarking && !grabbing {
             dragMark(to: convert(event.locationInWindow, from: nil), event.modifierFlags)
             return
         }
@@ -418,7 +441,9 @@ final class ImageCanvasView: NSView {
     override func mouseUp(with event: NSEvent) {
         if isMarking {
             // While drawing, clicks neither zoom nor close the viewer.
-            endMark()
+            if grabbing { grabbing = false } else { endMark() }
+            // Space may have been pressed or let go of during the drag.
+            window?.invalidateCursorRects(for: self)
             return
         }
         if didDrag {

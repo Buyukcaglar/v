@@ -60,7 +60,7 @@ struct Mark: Equatable {
 }
 
 /// Saves a copy of a photo with its marks drawn in, next to it: "IMG_1234.JPG" becomes
-/// "IMG_1234_markdown.JPG". Formats ImageIO can't write, such as camera RAW and WebP, are saved as
+/// "IMG_1234_marked.JPG". Formats ImageIO can't write, such as camera RAW and WebP, are saved as
 /// JPEG, or as PNG when they have transparency.
 enum MarkupWriter {
     /// Copies still being written. The app waits for them before it quits.
@@ -91,7 +91,7 @@ enum MarkupWriter {
         var newExt = original
         if let ext { newExt = !original.isEmpty && original == original.uppercased() ? ext.uppercased() : ext }
         let copy = url.deletingLastPathComponent()
-            .appendingPathComponent(url.deletingPathExtension().lastPathComponent + "_markdown")
+            .appendingPathComponent(url.deletingPathExtension().lastPathComponent + "_marked")
         return newExt.isEmpty ? copy : copy.appendingPathExtension(newExt)
     }
 

@@ -742,7 +742,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
                 closeViewer(nil)
             }
             return true
-        case 49:  // Space
+        case 49:  // Space; with the pen on, the canvas keeps it for panning
             step(event.modifierFlags.contains(.shift) ? -1 : 1)
             return true
         default:
@@ -832,7 +832,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         showMarks()
     }
 
-    /// Saves a copy of the photo with its marks drawn in next to it, as "Name_markdown.ext".
+    /// Saves a copy of the photo with its marks drawn in next to it, as "Name_marked.ext".
     @objc func saveMarkup(_ sender: Any?) {
         guard let url = currentURL, let markup = markups[url], !markup.marks.isEmpty else {
             NSSound.beep()
@@ -868,7 +868,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             filmstrip.thumbnailsChanged()
             if copy == currentURL { display() } else if neighborURLs.contains(copy) { preloadNeighbors() }
         } else if let i = files.firstIndex(of: url) {
-            // "IMG_1234_markdown.JPG" sorts just before "IMG_1234.JPG".
+            // "IMG_1234_marked.JPG" sorts just before "IMG_1234.JPG".
             let at = copy.lastPathComponent.localizedStandardCompare(url.lastPathComponent) == .orderedAscending ? i : i + 1
             files.insert(copy, at: at)
             if index >= at { index += 1 }
@@ -888,7 +888,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
         alert.messageText = unsaved.count == 1
             ? "Do you want to save the marks on “\(first.key.lastPathComponent)”?"
             : "Do you want to save the marks on \(unsaved.count) photos?"
-        alert.informativeText = "A copy with the marks is saved next to each photo, with “_markdown” added to its name. If you don’t save, your marks will be lost."
+        alert.informativeText = "A copy with the marks is saved next to each photo, with “_marked” added to its name. If you don’t save, your marks will be lost."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Don’t Save")
@@ -1049,6 +1049,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate, NSMenu
             for v in fadingViews { v.animator().alphaValue = 1 }
         }
         canvas.playOpen()
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        // Space let go of in another window never reaches the canvas.
+        canvas.letGoOfSpace()
     }
 
     func windowWillClose(_ notification: Notification) {
